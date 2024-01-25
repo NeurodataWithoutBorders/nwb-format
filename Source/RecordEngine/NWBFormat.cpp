@@ -96,6 +96,14 @@ int NWBFile::createFileStructure()
 	if (createGroup("/stimulus")) return -1;
 	if (createGroup("/stimulus/presentation")) return -1;
 	if (createGroup("/stimulus/templates")) return -1;
+    
+    if (createGroup("/specifications")) return -1;
+    if (createGroup("/specifications/core")) return -1;
+    if (createGroup("/specifications/core/2.6.0-alpha")) return -1;
+    if (createGroup("/specifications/hdmf-common")) return -1;
+    if (createGroup("/specifications/hdmf-common/1.8.0")) return -1;
+    cacheSpecifications("core/2.6.0-alpha/");
+    cacheSpecifications("hdmf-common/1.8.0/");
 
 	createStringDataSet("/session_description", "Recording with the Open Ephys GUI");
 	createStringDataSet("/session_start_time", time);
@@ -944,3 +952,14 @@ String NWBFile::generateUuid()
 		  return BaseDataType::I8;
 	  }
   }
+
+void NWBFile::cacheSpecifications(String specPath)
+{
+  File currentFile(__FILE__);
+  File schemaDir = currentFile.getParentDirectory().getParentDirectory().getParentDirectory().getChildFile("Resources/NWBSchema/" + specPath);
+  for (auto& schemaFile : schemaDir.findChildFiles(File::findFiles, false, "*.json")){
+      String specName = schemaFile.getFileNameWithoutExtension();
+      if (specName.contains("namespace")) specName = "namespace";
+      createStringDataSet("/specifications/" + specPath + specName, schemaFile.loadFileAsString());
+  }
+}

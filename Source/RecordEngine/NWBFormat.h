@@ -195,6 +195,9 @@ namespace NWBRecording
                                     float sourceSampleRate,
                                     String text);
         
+        /** Saves the specification files for the schema */
+        void cacheSpecifications(String specPath);
+        
         /** Returns the name of this NWB file */
 		String getFileName() override;
         
