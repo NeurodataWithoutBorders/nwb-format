@@ -196,13 +196,19 @@ namespace NWBRecording
                                     String text);
         
         /** Saves the specification files for the schema */
-        void cacheSpecifications(String specPath);
+        void cacheSpecifications(String specPath, String versionNumber);
         
         /** Returns the name of this NWB file */
 		String getFileName() override;
         
         /** Generate a new uuid string*/
         String generateUuid();
+        
+        /** Indicate NWB version files will be saved as */
+        const String NWBVersion = "2.6.0";  // TODO - may need to downgrade this to 2.5.0
+        
+        /** Indicate HDMF version for schema files */
+        const String HDMFVersion = "1.8.0";
 
 	protected:
         

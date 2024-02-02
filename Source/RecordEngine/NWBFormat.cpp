@@ -65,7 +65,7 @@ int NWBFile::createFileStructure()
 
 	setAttributeStr("core", "/", "namespace");
 	setAttributeStr("NWBFile", "/", "neurodata_type");
-	setAttributeStr("2.5.0", "/", "nwb_version");
+	setAttributeStr(NWBVersion, "/", "nwb_version");
 	setAttributeStr(identifierText, "/", "object_id");
 
 	if (createGroup("/acquisition")) return -1;
@@ -98,12 +98,8 @@ int NWBFile::createFileStructure()
 	if (createGroup("/stimulus/templates")) return -1;
     
     if (createGroup("/specifications")) return -1;
-    if (createGroup("/specifications/core")) return -1;
-    if (createGroup("/specifications/core/2.6.0-alpha")) return -1;
-    if (createGroup("/specifications/hdmf-common")) return -1;
-    if (createGroup("/specifications/hdmf-common/1.8.0")) return -1;
-    cacheSpecifications("core/2.6.0-alpha/");
-    cacheSpecifications("hdmf-common/1.8.0/");
+    cacheSpecifications("core/", NWBVersion);
+    cacheSpecifications("hdmf-common/", HDMFVersion);
 
 	createStringDataSet("/session_description", "Recording with the Open Ephys GUI");
 	createStringDataSet("/session_start_time", time);
@@ -953,13 +949,16 @@ String NWBFile::generateUuid()
 	  }
   }
 
-void NWBFile::cacheSpecifications(String specPath)
+void NWBFile::cacheSpecifications(String specPath, String versionNumber)
 {
+  if (createGroup("/specifications/" + specPath)) return -1;
+  if (createGroup("/specifications/" + specPath + versionNumber)) return -1;
+  
   File currentFile(__FILE__);
-  File schemaDir = currentFile.getParentDirectory().getParentDirectory().getParentDirectory().getChildFile("Resources/NWBSchema/" + specPath);
+  File schemaDir = currentFile.getParentDirectory().getParentDirectory().getParentDirectory().getChildFile("Resources/NWBSchema/" + specPath + versionNumber);
   for (auto& schemaFile : schemaDir.findChildFiles(File::findFiles, false, "*.json")){
       String specName = schemaFile.getFileNameWithoutExtension();
       if (specName.contains("namespace")) specName = "namespace";
-      createStringDataSet("/specifications/" + specPath + specName, schemaFile.loadFileAsString());
+      createStringDataSet("/specifications/" + specPath + versionNumber + specName, schemaFile.loadFileAsString());
   }
 }
