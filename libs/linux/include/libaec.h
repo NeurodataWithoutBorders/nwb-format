@@ -2,19 +2,7 @@
  * @file libaec.h
  *
  * @section LICENSE
- * Copyright 2012 - 2019
- *
- * Mathis Rosenhauer, Moritz Hanke, Joerg Behrens
- * Deutsches Klimarechenzentrum GmbH
- * Bundesstr. 45a
- * 20146 Hamburg Germany
- *
- * Luis Kornblueh
- * Max-Planck-Institut fuer Meteorologie
- * Bundesstr. 53
- * 20146 Hamburg
- * Germany
- *
+ * Copyright 2021 Mathis Rosenhauer, Moritz Hanke, Joerg Behrens, Luis Kornblueh
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -52,10 +40,14 @@
 
 #include <stddef.h>
 
-#include "libaec_Export.h"
-
 #ifdef __cplusplus
 extern "C"{
+#endif
+
+#if BUILDING_LIBAEC && HAVE_VISIBILITY
+#  define LIBAEC_DLL_EXPORTED __attribute__((__visibility__("default")))
+#else
+#  define LIBAEC_DLL_EXPORTED
 #endif
 
 struct internal_state;
@@ -83,7 +75,7 @@ struct aec_stream {
     /* block size in samples */
     unsigned int block_size;
 
-    /* Reference sample interval, the number of Coded Data Sets
+    /* Reference sample interval, the number of blocks
      * between consecutive reference samples (up to 4096). */
     unsigned int rsi;
 
@@ -113,7 +105,9 @@ struct aec_stream {
 /* Use restricted set of code options */
 #define AEC_RESTRICTED 16
 
-/* Pad RSI to byte boundary. Only for decoding CCSDS sample data. */
+/* Pad RSI to byte boundary. Only used for decoding some CCSDS sample
+ * data. Do not use this to produce new data as it violates the
+ * standard. */
 #define AEC_PAD_RSI 32
 
 /* Do not enforce standard regarding legal block sizes. */
@@ -140,26 +134,27 @@ struct aec_stream {
  * set AEC_FLUSH to drain all output.
  *
  * It is not possible to continue encoding of the same stream after it
- * has been flushed because the last byte may be padded with fill
- * bits. */
+ * has been flushed. For one, the last block may be padded zeros after
+ * preprocessing. Secondly, the last encoded byte may be padded with
+ * fill bits. */
 #define AEC_FLUSH 1
 
 /*********************************************/
 /* Streaming encoding and decoding functions */
 /*********************************************/
-libaec_EXPORT int aec_encode_init(struct aec_stream *strm);
-libaec_EXPORT int aec_encode(struct aec_stream *strm, int flush);
-libaec_EXPORT int aec_encode_end(struct aec_stream *strm);
+LIBAEC_DLL_EXPORTED int aec_encode_init(struct aec_stream *strm);
+LIBAEC_DLL_EXPORTED int aec_encode(struct aec_stream *strm, int flush);
+LIBAEC_DLL_EXPORTED int aec_encode_end(struct aec_stream *strm);
 
-libaec_EXPORT int aec_decode_init(struct aec_stream *strm);
-libaec_EXPORT int aec_decode(struct aec_stream *strm, int flush);
-libaec_EXPORT int aec_decode_end(struct aec_stream *strm);
+LIBAEC_DLL_EXPORTED int aec_decode_init(struct aec_stream *strm);
+LIBAEC_DLL_EXPORTED int aec_decode(struct aec_stream *strm, int flush);
+LIBAEC_DLL_EXPORTED int aec_decode_end(struct aec_stream *strm);
 
 /***************************************************************/
 /* Utility functions for encoding or decoding a memory buffer. */
 /***************************************************************/
-libaec_EXPORT int aec_buffer_encode(struct aec_stream *strm);
-libaec_EXPORT int aec_buffer_decode(struct aec_stream *strm);
+LIBAEC_DLL_EXPORTED int aec_buffer_encode(struct aec_stream *strm);
+LIBAEC_DLL_EXPORTED int aec_buffer_decode(struct aec_stream *strm);
 
 #ifdef __cplusplus
 }
