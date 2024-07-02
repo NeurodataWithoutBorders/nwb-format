@@ -2,7 +2,7 @@
     ------------------------------------------------------------------
 
     This file is part of the Open Ephys GUI
-    Copyright (C) 2021 Open Ephys
+    Copyright (C) 2024 Open Ephys
 
     ------------------------------------------------------------------
 
@@ -27,8 +27,8 @@
 #include <FileSourceHeaders.h>
 
 //TODO: Define these:
-//#define MIN_NWB_VERSION 
-//#define MAX_NWB_VERSION 
+//#define MIN_NWB_VERSION
+//#define MAX_NWB_VERSION
 
 class HDF5RecordingData;
 namespace H5
@@ -36,7 +36,7 @@ namespace H5
 class DataSet;
 class H5File;
 class DataType;
-}
+} // namespace H5
 
 /**
     A File Source plugin that can read data from NWB 2.0 files
@@ -44,21 +44,20 @@ class DataType;
 class NWBFileSource : public FileSource
 {
 public:
-    
     /** Constructor */
     NWBFileSource();
-    
+
     /** Destructor */
     ~NWBFileSource();
-    
+
     /** Attempt to open the file, and return true if successful */
     bool open (File file) override;
-    
+
     /** Fill rthe infoArray and eventInfoAray with the relevant information for all recordings*/
     void fillRecordInfo() override;
 
     /** Update the recording to be read in */
-    void updateActiveRecord(int index) override;
+    void updateActiveRecord (int index) override;
 
     /** Reads nSamples of int16 data into a temporary buffer */
     int readData (int16* buffer, int nSamples) override;
@@ -68,16 +67,14 @@ public:
 
     /** Convert nSamples of data from int16 to float */
     void processChannelData (int16* inBuffer, float* outBuffer, int channel, int64 numSamples) override;
-    
+
     /** Add info about events occurring within a sample range */
-    void processEventData(EventInfo &info, int64 startTimestamp, int64 stopTimestamp) override;
+    void processEventData (EventInfo& info, int64 startTimestamp, int64 stopTimestamp) override;
 
     /** Return false if file is not able to be opened */
     bool isReady() override;
 
-
 private:
-   
     ScopedPointer<H5::H5File> sourceFile;
     ScopedPointer<H5::DataSet> dataSet;
 
@@ -92,6 +89,4 @@ private:
     bool hasEventData;
 };
 
-
-
-#endif  // NWBFILESOURCE_H_INCLUDED
+#endif // NWBFILESOURCE_H_INCLUDED
