@@ -31,7 +31,7 @@ function(link_open_ephys_lib target libname)
 			endif()
 
 		elseif(LIB_PATH_RELEASE)
-			message(WARNING "${libname} ${config} library not found - will link to Release version instead.")
+			message(STATUS "${libname} ${config} library not found - will link to Release version instead.")
 		else()
 			message(WARNING "${libname} ${config} library not found - this configuration will not be available.")
 		endif()
