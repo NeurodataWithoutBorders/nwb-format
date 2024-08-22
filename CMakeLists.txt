@@ -108,6 +108,9 @@ if(NOT HDF5_FOUND) #if package finding fails, try manually
 	find_path(HDF5_INCLUDE_DIRS H5Cpp.h)
 endif()
 
+find_library(AQNWB_LIBRARIES NAMES aqnwb)
+find_path(AQNWB_INCLUDE_DIRS aqnwb.hpp)
+
 include_directories(${HDF5_INCLUDE_DIRS})
 
 target_link_libraries(${PLUGIN_NAME} ${HDF5_LIBRARIES} ${HDF5_CXX_LIBRARIES})
