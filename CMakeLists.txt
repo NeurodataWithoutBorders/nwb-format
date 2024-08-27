@@ -33,8 +33,10 @@ set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS
 
 
 set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Source)
-file(GLOB_RECURSE SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h")
+file(GLOB_RECURSE SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h" "${SOURCE_PATH}/*.hpp")
 set(GUI_COMMONLIB_DIR ${GUI_BASE_DIR}/installed_libs)
+
+include_directories(${SOURCE_PATH}/aqnwb)
 
 set(CONFIGURATION_FOLDER $<$<CONFIG:Debug>:Debug>$<$<NOT:$<CONFIG:Debug>>:Release>)
 
@@ -108,16 +110,12 @@ if(NOT HDF5_FOUND) #if package finding fails, try manually
 	find_path(HDF5_INCLUDE_DIRS H5Cpp.h)
 endif()
 
-find_library(AQNWB_LIBRARIES NAMES aqnwb)
-find_path(AQNWB_INCLUDE_DIRS aqnwb.hpp)
+find_package(Boost REQUIRED)
 
-include_directories(${HDF5_INCLUDE_DIRS})
-
-target_link_libraries(${PLUGIN_NAME} ${HDF5_LIBRARIES} ${HDF5_CXX_LIBRARIES})
-target_include_directories(${PLUGIN_NAME} PRIVATE ${HDF5_INCLUDE_DIRS})
+target_link_libraries(${PLUGIN_NAME} ${HDF5_LIBRARIES} ${HDF5_CXX_LIBRARIES} ${Boost_LIBRARIES})
+target_include_directories(${PLUGIN_NAME} PRIVATE ${HDF5_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 
 #target_include_directories(${PLUGIN_NAME} PUBLIC ../OpenEphysHDF5Lib/Source)
-
 
 # Open Ephys common libraries
 include(link_open_ephys_lib.cmake)
