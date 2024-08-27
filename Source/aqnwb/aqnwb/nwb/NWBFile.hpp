@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "aqnwb/aqnwb_export.hpp"
 #include "aqnwb/BaseIO.hpp"
 #include "aqnwb/Types.hpp"
 #include "aqnwb/nwb/base/TimeSeries.hpp"

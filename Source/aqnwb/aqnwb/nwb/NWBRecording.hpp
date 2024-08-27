@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aqnwb/aqnwb_export.hpp"
 #include "aqnwb/Types.hpp"
 #include "aqnwb/nwb/NWBFile.hpp"
 
@@ -9,7 +10,7 @@ namespace AQNWB::NWB
  * @brief The NWBRecording class manages the recording process
  */
 
-class NWBRecording
+class AQNWB_EXPORT NWBRecording
 {
 public:
   /**
@@ -34,17 +35,12 @@ public:
 
   /**
    * @brief Opens the file for recording.
-   * @param rootFolder The root folder where the file will be stored.
-   * @param baseName The base name of the file (will be appended with
-   *                 experiment number).
-   * @param experimentNumber The experiment number.
+   * @param filename The name of the file to open.
    * @param recordingArrays ChannelVector objects indicating the electrodes to
    *                        use for ElectricalSeries recordings
    * @param IOType Type of backend IO to use
    */
-  Status openFile(const std::string& rootFolder,
-                  const std::string& baseName,
-                  int experimentNumber,
+  Status openFile(const std::string& filename,
                   std::vector<Types::ChannelVector> recordingArrays,
                   const std::string& IOType = "HDF5");
 
