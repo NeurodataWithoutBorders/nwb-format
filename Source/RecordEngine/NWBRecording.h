@@ -26,7 +26,7 @@
 
 #include <RecordingLib.h>
 
-#include "aqnwb/nwb/NWBRecording.hpp"
+#include "../aqnwb/nwb/NWBRecording.hpp"
 
 typedef Array<const ContinuousChannel*> ContinuousGroup;
 

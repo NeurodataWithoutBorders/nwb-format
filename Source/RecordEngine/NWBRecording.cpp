@@ -25,8 +25,8 @@
 #include <string>
 
 #include "NWBRecording.h"
-#include "aqnwb/Channel.hpp"
-#include "aqnwb/Utils.hpp"
+#include "../aqnwb/Channel.hpp"
+#include "../aqnwb/Utils.hpp"
 
 #include "../../plugin-GUI/Source/Processors/RecordNode/RecordNode.h"
 
@@ -238,7 +238,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
     // TODO - update positionOffset tracking
 
     // write data
-    // std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts() / 1e6, dataBuffer);
+     std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts() / 1e6, dataBuffer);
     nwbRecording.writeTimeseriesData("ElectricalSeries",
                                      datasetIndex,
                                      *channel,  // to do, get recording channel information
