@@ -26,7 +26,9 @@
 
 #include <RecordingLib.h>
 
-#include "../aqnwb/nwb/NWBRecording.hpp"
+#include "BaseIO.hpp"
+#include "nwb/NWBFile.hpp"
+#include "nwb/RecordingContainers.hpp"
 
 typedef Array<const ContinuousChannel*> ContinuousGroup;
 
@@ -75,30 +77,36 @@ namespace NWBRecording
         /** Write the timestamp sync text messages to disk*/
         void writeTimestampSyncText(uint64 streamId, int64 timestamp, float sourceSampleRate, String text) override;
 
-        // /** Allows the file identifier to be set externally*/
-        // void setParameter(EngineParameter &parameter) override;
+        /** Allows the file identifier to be set externally*/
+        void setParameter(EngineParameter &parameter) override;
+
+        /** Reset the engine */
+        void reset();
+
+        /** Create recording arrays */
+        void createRecordingArrays();
 
     private:
-        /** NWB recording manager */
-        AQNWB::NWB::NWBRecording nwbRecording;
+        /** NWB file */
+        std::unique_ptr<AQNWB::NWB::NWBFile> nwbfile;
+
+        /** NWB recording container manager */
+        std::unique_ptr<AQNWB::NWB::RecordingContainers> recordingContainers;
+
+        /** NWB I/O object */
+        std::shared_ptr<AQNWB::BaseIO> io;
 
         /** Holds channel information and ids */
         std::vector<AQNWB::Types::ChannelVector> recordingArrays;
 
-        // /** For each incoming recorded channel, which dataset (stream) is it associated with? */
-        // Array<int> datasetIndexes;
-
-        // /** For each incoming recorded channel, what is the local index within a stream? */
-        // Array<int> writeChannelIndexes;
+        /** Holds the indexes of the ElectricalSeries containers added to recordingContainers */
+        std::vector<AQNWB::Types::SizeType> esContainerIndexes;
 
         /** Holds pointers to all recorded channels within a stream */
         Array<ContinuousGroup> continuousChannelGroups;
 
         // /** Holds pointers to all recorded event channels*/
         // Array<const EventChannel*> eventChannels;
-
-        // /** Holds pointers to all recorded spike channels*/
-        // Array<const SpikeChannel*> spikeChannels;
 
         /** Holds pointers to all incoming continuous channels (used for electrode table)*/
         Array<const ContinuousChannel*> continuousChannels;
@@ -107,9 +115,7 @@ namespace NWBRecording
         HeapBlock<int64> smpBuffer;
 
         // /** The identifier for the current file (can be set externally) */
-        // String identifierText;
-
-        // JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NWBRecordEngine);
+        String identifierText;
     };
 }
 
