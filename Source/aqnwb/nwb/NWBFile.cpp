@@ -6,22 +6,24 @@
 #include <sstream>
 #include <string>
 
-#include "NWBFile.hpp"
+#include "nwb/NWBFile.hpp"
 
-#include "../BaseIO.hpp"
-#include "../Channel.hpp"
-#include "../Utils.hpp"
-#include "../spec/core.hpp"
-#include "../spec/hdmf_common.hpp"
-#include "../spec/hdmf_experimental.hpp"
-#include "device/Device.hpp"
-#include "ecephys/ElectricalSeries.hpp"
-#include "file/ElectrodeGroup.hpp"
-#include "file/ElectrodeTable.hpp"
+#include "BaseIO.hpp"
+#include "Channel.hpp"
+#include "Utils.hpp"
+#include "nwb/device/Device.hpp"
+#include "nwb/ecephys/ElectricalSeries.hpp"
+#include "nwb/file/ElectrodeGroup.hpp"
+#include "nwb/file/ElectrodeTable.hpp"
+#include "spec/core.hpp"
+#include "spec/hdmf_common.hpp"
+#include "spec/hdmf_experimental.hpp"
 
 using namespace AQNWB::NWB;
 
 constexpr SizeType CHUNK_XSIZE = 2048;
+
+std::vector<SizeType> NWBFile::emptyContainerIndexes = {};
 
 // NWBFile
 
@@ -45,7 +47,6 @@ Status NWBFile::initialize()
 
 Status NWBFile::finalize()
 {
-  recordingContainers.reset();
   return io->close();
 }
 
@@ -56,7 +57,7 @@ Status NWBFile::createFileStructure()
   }
 
   io->createCommonNWBAttributes("/", "core", "NWBFile", "");
-  io->createAttribute(AQNWB::spec::core::version, "/", "nwb_version");
+  io->createAttribute(AQNWB::SPEC::CORE::version, "/", "nwb_version");
 
   io->createGroup("/acquisition");
   io->createGroup("/analysis");
@@ -70,9 +71,15 @@ Status NWBFile::createFileStructure()
 
   io->createGroup("/specifications");
   io->createReferenceAttribute("/specifications", "/", ".specloc");
-  cacheSpecifications("core", spec::core::version, spec::core::registerVariables);
-  cacheSpecifications("hdmf-common", spec::hdmf_common::version, spec::hdmf_common::registerVariables);
-  cacheSpecifications("hdmf-experimental", spec::hdmf_experimental::version, spec::hdmf_experimental::registerVariables);
+
+  cacheSpecifications(
+      "core", AQNWB::SPEC::CORE::version, AQNWB::SPEC::CORE::specVariables);
+  cacheSpecifications("hdmf-common",
+                      AQNWB::SPEC::HDMF_COMMON::version,
+                      AQNWB::SPEC::HDMF_COMMON::specVariables);
+  cacheSpecifications("hdmf-experimental",
+                      AQNWB::SPEC::HDMF_EXPERIMENTAL::version,
+                      AQNWB::SPEC::HDMF_EXPERIMENTAL::specVariables);
 
   std::string time = getCurrentTime();
   std::vector<std::string> timeVec = {time};
@@ -87,7 +94,9 @@ Status NWBFile::createFileStructure()
 
 Status NWBFile::createElectricalSeries(
     std::vector<Types::ChannelVector> recordingArrays,
-    const BaseDataType& dataType)
+    const BaseDataType& dataType,
+    RecordingContainers* recordingContainers,
+    std::vector<SizeType>& containerIndexes)
 {
   if (!io->canModifyObjects()) {
     return Status::Failure;
@@ -126,7 +135,8 @@ Status NWBFile::createElectricalSeries(
         SizeArray {0, channelVector.size()},
         SizeArray {CHUNK_XSIZE, 0});
     electricalSeries->initialize();
-    recordingContainers->addData(std::move(electricalSeries));
+    recordingContainers->addContainer(std::move(electricalSeries));
+    containerIndexes.push_back(recordingContainers->containers.size() - 1);
 
     // Add electrode information to electrode table (does not write to datasets
     // yet)
@@ -139,28 +149,20 @@ Status NWBFile::createElectricalSeries(
   return Status::Success;
 }
 
-Status NWBFile::startRecording()
+template<SizeType N>
+void NWBFile::cacheSpecifications(
+    const std::string& specPath,
+    const std::string& versionNumber,
+    const std::array<std::pair<std::string_view, std::string_view>, N>&
+        specVariables)
 {
-  return io->startRecording();
-}
-
-void NWBFile::stopRecording()
-{
-  io->stopRecording();
-}
-
-void NWBFile::cacheSpecifications(const std::string& specPath, 
-                                  const std::string& version,
-                                  void (*registerFunc)(std::map<std::string, const std::string*>&))
-{
-  std::map<std::string, const std::string*> registry;
-  registerFunc(registry);
-
   io->createGroup("/specifications/" + specPath + "/");
-  io->createGroup("/specifications/" + specPath + "/" + version);
+  io->createGroup("/specifications/" + specPath + "/" + versionNumber);
 
-  for (const auto& [name, content] : registry) {
-      io->createStringDataSet("/specifications/" + specPath + "/" + version + "/" + name, *content);
+  for (const auto& [name, content] : specVariables) {
+    io->createStringDataSet("/specifications/" + specPath + "/" + versionNumber
+                                + "/" + std::string(name),
+                            std::string(content));
   }
 }
 
@@ -173,27 +175,4 @@ std::unique_ptr<AQNWB::BaseRecordingData> NWBFile::createRecordingData(
 {
   return std::unique_ptr<BaseRecordingData>(
       io->createArrayDataSet(type, size, chunking, path));
-}
-
-TimeSeries* NWBFile::getTimeSeries(const SizeType& timeseriesInd)
-{
-  if (timeseriesInd >= this->recordingContainers->containers.size()) {
-    return nullptr;
-  } else {
-    return this->recordingContainers->containers[timeseriesInd].get();
-  }
-}
-
-// Recording Container
-
-RecordingContainers::RecordingContainers(const std::string& name)
-    : name(name)
-{
-}
-
-RecordingContainers::~RecordingContainers() {}
-
-void RecordingContainers::addData(std::unique_ptr<TimeSeries> data)
-{
-  this->containers.push_back(std::move(data));
 }
