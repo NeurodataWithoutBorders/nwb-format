@@ -53,7 +53,6 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
     param = new EngineParameter(EngineParameter::STR, 0, "Identifier Text", String());
     man->addParameter(param);
     return man;
-    
 }
 
 
@@ -122,6 +121,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
                                             static_cast<SizeType>(size),
                                             intBuffer.get(),
                                             timestampBuffer);
+
     // TODO - save sample numbers as well for offline syncing
 }
  
@@ -211,7 +211,7 @@ void NWBRecordEngine::createRecordingArrays()
                                                    streamIndex, 
                                                    channelInfo->getLocalIndex(),
                                                    channelInfo->getGlobalIndex(),
-                                                   channelInfo->getBitVolts() * 1e6,
+                                                   channelInfo->getBitVolts() * 1e6,  // TODO - should be / 1e6?
                                                    channelInfo->getSampleRate(), 
                                                    channelInfo->getBitVolts()));
         }
