@@ -75,7 +75,7 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
         NWBRecordEngine::createRecordingArrays();
 
         // create the nwbfile
-        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(AQNWB::generateUuid(), io);
+        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(AQNWB::generateUuid(), io, "Recording with the Open Ephys GUI");
         this->nwbfile->initialize();  // TODO - have option to initialize cache size based on # of channels
 
         // create recording containers
@@ -115,7 +115,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
         }
     }
     // write data  - TODO - need to test this out still
-    std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts() / 1e6, dataBuffer);
+    std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts(), dataBuffer);
     this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[datasetIndex],
                                             *channel,
                                             static_cast<SizeType>(size),
@@ -211,7 +211,7 @@ void NWBRecordEngine::createRecordingArrays()
                                                    streamIndex, 
                                                    channelInfo->getLocalIndex(),
                                                    channelInfo->getGlobalIndex(),
-                                                   channelInfo->getBitVolts() * 1e6,  // TODO - should be / 1e6?
+                                                   1e6,
                                                    channelInfo->getSampleRate(), 
                                                    channelInfo->getBitVolts()));
         }
