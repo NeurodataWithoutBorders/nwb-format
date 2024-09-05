@@ -27,9 +27,10 @@ std::vector<SizeType> NWBFile::emptyContainerIndexes = {};
 
 // NWBFile
 
-NWBFile::NWBFile(const std::string& idText, std::shared_ptr<BaseIO> io)
+NWBFile::NWBFile(const std::string& idText, std::shared_ptr<BaseIO> io, std::string description)
     : identifierText(idText)
     , io(io)
+    , description(description)
 {
 }
 
@@ -84,7 +85,7 @@ Status NWBFile::createFileStructure()
   std::string time = getCurrentTime();
   std::vector<std::string> timeVec = {time};
   io->createStringDataSet("/file_create_date", timeVec);
-  io->createStringDataSet("/session_description", "a recording session");
+  io->createStringDataSet("/session_description", description);
   io->createStringDataSet("/session_start_time", time);
   io->createStringDataSet("/timestamps_reference_time", time);
   io->createStringDataSet("/identifier", identifierText);
