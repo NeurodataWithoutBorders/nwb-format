@@ -27,17 +27,20 @@ std::vector<SizeType> NWBFile::emptyContainerIndexes = {};
 
 // NWBFile
 
-NWBFile::NWBFile(const std::string& idText, std::shared_ptr<BaseIO> io, std::string description)
+NWBFile::NWBFile(const std::string& idText, std::shared_ptr<BaseIO> io)
     : identifierText(idText)
     , io(io)
-    , description(description)
 {
 }
 
 NWBFile::~NWBFile() {}
 
-Status NWBFile::initialize()
+Status NWBFile::initialize(const std::string description,
+                           const std::string dataCollection)
 {
+  this->description = description;
+  this->dataCollection = dataCollection;
+
   if (std::filesystem::exists(io->getFileName())) {
     return io->open(false);
   } else {
@@ -69,6 +72,9 @@ Status NWBFile::createFileStructure()
   io->createGroup("/general");
   io->createGroup("/general/devices");
   io->createGroup("/general/extracellular_ephys");
+  if (dataCollection != "") {
+    io->createStringDataSet("/general/data_collection", dataCollection);
+  }
 
   io->createGroup("/specifications");
   io->createReferenceAttribute("/specifications", "/", ".specloc");

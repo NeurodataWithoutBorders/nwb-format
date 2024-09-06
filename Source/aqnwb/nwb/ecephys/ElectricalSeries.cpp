@@ -57,9 +57,9 @@ void ElectricalSeries::initialize()
                              chunkSize,
                              getPath() + "/channel_conversion"));
   channelConversion->writeDataBlock(
-    std::vector<SizeType>(1, channelVector.size()), 
-    BaseDataType::F32, 
-    &channelConversions[0]);
+      std::vector<SizeType>(1, channelVector.size()),
+      BaseDataType::F32,
+      &channelConversions[0]);
   io->createCommonNWBAttributes(getPath() + "/channel_conversion",
                                 "hdmf-common",
                                 "",

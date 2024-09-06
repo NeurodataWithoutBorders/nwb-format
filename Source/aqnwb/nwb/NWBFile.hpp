@@ -30,9 +30,8 @@ public:
    * @brief Constructor for NWBFile class.
    * @param idText The identifier text for the NWBFile.
    * @param io The shared pointer to the IO object.
-   * @param description A description of the NWBFile session.
    */
-  NWBFile(const std::string& idText, std::shared_ptr<BaseIO> io, std::string description = "a recording session");
+  NWBFile(const std::string& idText, std::shared_ptr<BaseIO> io);
 
   /**
    * @brief Deleted copy constructor to prevent construction-copying.
@@ -52,8 +51,11 @@ public:
   /**
    * @brief Initializes the NWB file by opening and setting up the file
    * structure.
+   * @param description A description of the NWBFile session.
+   * @param dataCollection Information about the data collection methods.
    */
-  Status initialize();
+  Status initialize(const std::string description = "a recording session",
+                    const std::string dataCollection = "");
 
   /**
    * @brief Finalizes the NWB file by closing it.
@@ -125,7 +127,9 @@ private:
   const std::string identifierText;
   std::shared_ptr<BaseIO> io;
   static std::vector<SizeType> emptyContainerIndexes;
+
   std::string description;
+  std::string dataCollection;
 };
 
 }  // namespace AQNWB::NWB

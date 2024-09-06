@@ -1,10 +1,10 @@
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
 
 #include <boost/date_time.hpp>
 #include <boost/endian/conversion.hpp>
@@ -72,19 +72,21 @@ inline std::shared_ptr<BaseIO> createIO(const std::string& type,
   }
 }
 
-inline void convertFloatToInt16LE(const float* source, void* dest, int numSamples)
+inline void convertFloatToInt16LE(const float* source,
+                                  void* dest,
+                                  int numSamples)
 {
-    auto maxVal = static_cast<double>(0x7fff);
-    auto intData = static_cast<char*>(dest);
+  auto maxVal = static_cast<double>(0x7fff);
+  auto intData = static_cast<char*>(dest);
 
-    for (int i = 0; i < numSamples; ++i)
-    {
-        auto clampedValue = std::clamp(maxVal * source[i], -maxVal, maxVal);
-        auto intValue = static_cast<uint16_t>(static_cast<int16_t>(std::round(clampedValue)));
-        intValue = boost::endian::native_to_little(intValue);
-        *reinterpret_cast<uint16_t*>(intData) = intValue;
-        intData += 2; // destBytesPerSample is always 2
-    }
+  for (int i = 0; i < numSamples; ++i) {
+    auto clampedValue = std::clamp(maxVal * source[i], -maxVal, maxVal);
+    auto intValue =
+        static_cast<uint16_t>(static_cast<int16_t>(std::round(clampedValue)));
+    intValue = boost::endian::native_to_little(intValue);
+    *reinterpret_cast<uint16_t*>(intData) = intValue;
+    intData += 2;  // destBytesPerSample is always 2
+  }
 }
 
 inline std::unique_ptr<int16_t[]> transformToInt16(SizeType numSamples,
