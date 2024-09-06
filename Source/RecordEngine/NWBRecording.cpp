@@ -49,7 +49,6 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
     //static factory that instantiates the engine manager, which allows to configure recording options among other things. See OriginalRecording to see how to create options for a record engine
     RecordEngineManager* man = new RecordEngineManager("NWB2", "NWB2", &(engineFactory<NWBRecordEngine>));
     EngineParameter* param;
-   
     param = new EngineParameter(EngineParameter::STR, 0, "Identifier Text", String());
     man->addParameter(param);
     return man;
@@ -75,13 +74,16 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
         NWBRecordEngine::createRecordingArrays();
 
         // create the nwbfile
-        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(AQNWB::generateUuid(), io, "Recording with the Open Ephys GUI");
-        this->nwbfile->initialize();  // TODO - have option to initialize cache size based on # of channels
+        std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
+        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(AQNWB::generateUuid(), io);
+        this->nwbfile->initialize("Recording with the Open Ephys GUI", dataCollection);  
+        // TODO - have option to initialize cache size based on # of channels
 
         // create recording containers
         this->recordingContainers = std::make_unique<AQNWB::NWB::RecordingContainers>();
         this->nwbfile->createElectricalSeries(
-            this->recordingArrays, AQNWB::BaseDataType::I16, this->recordingContainers.get(), this->esContainerIndexes);
+            this->recordingArrays, AQNWB::BaseDataType::I16, this->recordingContainers.get(), this->esContainerIndexes); 
+        // TODO add io_settings to set chunk size for different data types
 
         // start recording
         this->io->startRecording();
@@ -114,7 +116,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
             }
         }
     }
-    // write data  - TODO - need to test this out still
+
     std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts(), dataBuffer);
     this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[datasetIndex],
                                             *channel,
@@ -126,7 +128,8 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
 }
  
 void NWBRecordEngine::writeEvent(int eventIndex, const MidiMessage& event) 
-{
+{   
+    // TODO - replacew with AQNWB
 	// const EventChannel* channel = getEventChannel(eventIndex);
 	// EventPtr eventStruct = Event::deserialize(event, channel);
 
@@ -135,12 +138,14 @@ void NWBRecordEngine::writeEvent(int eventIndex, const MidiMessage& event)
 
 void NWBRecordEngine::writeTimestampSyncText(uint64 streamId, int64 timestamp, float sourceSampleRate, String text)
 {
+    // TODO - replacew with AQNWB
 	// nwb->writeTimestampSyncText(streamId, timestamp, sourceSampleRate, text);
 }
 
 
 void NWBRecordEngine::writeSpike(int electrodeIndex, const Spike* spike) 
 {
+    // TODO - replacew with AQNWB
 	// const SpikeChannel* channel = getSpikeChannel(electrodeIndex);
 
 	// nwb->writeSpike(electrodeIndex, channel, spike);
