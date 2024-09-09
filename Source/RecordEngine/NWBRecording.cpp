@@ -110,7 +110,6 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
     for (auto& channelVector : this->recordingArrays) {
         for (auto& ch : channelVector) {
             if (ch.globalIndex == realChannel) {
-                datasetIndex = ch.groupIndex; 
                 channel = &ch;
                 break;
             }
@@ -118,7 +117,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
     }
 
     std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts(), dataBuffer);
-    this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[datasetIndex],
+    this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[channel->groupIndex],
                                             *channel,
                                             static_cast<SizeType>(size),
                                             intBuffer.get(),
@@ -145,10 +144,37 @@ void NWBRecordEngine::writeTimestampSyncText(uint64 streamId, int64 timestamp, f
 
 void NWBRecordEngine::writeSpike(int electrodeIndex, const Spike* spike) 
 {
-    // TODO - replacew with AQNWB
-	// const SpikeChannel* channel = getSpikeChannel(electrodeIndex);
+    // // extract info from spike channel
+	// const SpikeChannel* spikeChannel = getSpikeChannel(electrodeIndex);
+    // int nSamplesPerChannel = spikeChannel->getTotalSamples();
+    // int nChannels = spikeChannel->getNumChannels();
+    // int nSamples = nSamplesPerChannel * nChannels;
 
-	// nwb->writeSpike(electrodeIndex, channel, spike);
+    // AQNWB::Channel* channel = nullptr;
+    // AQNWB::Types::SizeType datasetIndex = 0;
+    // for (auto& channelVector : this->recordingArrays) {  // TODO - maybe different from recordingArrays?
+    //     for (auto& ch : channelVector) {
+    //         if (ch.globalIndex == realChannel) {
+    //             channel = &ch;
+    //             break;
+    //         }
+    //     }
+    // }
+
+    // // extract info from spike object
+    // double timestamps = spike->getTimestampInSeconds();
+    // std::unique_ptr<int16_t[]> intData = AQNWB::transformToInt16(static_cast<SizeType>(nSamples), 
+    //                                                              channel->getBitVolts(),
+    //                                                              spike->getDataPointer());
+
+    // // write spike data
+    // this->recordingContainers->writeSpikeData(this->spikeContainerIndexes[channel->groupIndex],
+    //                                           *channel,
+    //                                           static_cast<SizeType>(nChannels, SamplesPerChannel),
+    //                                           intData.get(),
+    //                                           &timestamps);
+
+                                                    // TODO - add writeEventMetadata functionalities
 }
 
 void NWBRecordEngine::setParameter(EngineParameter& parameter)
