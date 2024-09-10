@@ -99,20 +99,23 @@ namespace NWBRecording
         /** Holds channel information and ids */
         std::vector<AQNWB::Types::ChannelVector> recordingArrays;
 
+        /** Holds channel information and ids */
+        std::vector<AQNWB::Types::ChannelVector> spikeRecordingArrays;
+
         /** Holds the indexes of the ElectricalSeries containers added to recordingContainers */
         std::vector<AQNWB::Types::SizeType> esContainerIndexes;
+
+        /** Holds the indexes of the ElectricalSeries containers added to recordingContainers */
+        std::vector<AQNWB::Types::SizeType> spikeContainerIndexes;
 
         /** Holds pointers to all recorded channels within a stream */
         Array<ContinuousGroup> continuousChannelGroups;
 
-        // /** Holds pointers to all recorded event channels*/
-        // Array<const EventChannel*> eventChannels;
+        /** Holds pointers to all recorded spike channels*/
+        Array<const SpikeChannel*> spikeChannels;
 
         /** Holds pointers to all incoming continuous channels (used for electrode table)*/
         Array<const ContinuousChannel*> continuousChannels;
-
-        /** Holds integer sample numbers for writing */
-        HeapBlock<int64> smpBuffer;
 
         // /** The identifier for the current file (can be set externally) */
         String identifierText;

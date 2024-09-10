@@ -85,6 +85,9 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
             this->recordingArrays, AQNWB::BaseDataType::I16, this->recordingContainers.get(), this->esContainerIndexes); 
         // TODO add io_settings to set chunk size for different data types
 
+        this->nwbfile->createSpikeEventSeries(
+            this->spikeRecordingArrays, AQNWB::BaseDataType::I16, this->recordingContainers.get(), this->spikeContainerIndexes);       
+
         // start recording
         this->io->startRecording();
     }
@@ -128,7 +131,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
  
 void NWBRecordEngine::writeEvent(int eventIndex, const MidiMessage& event) 
 {   
-    // TODO - replacew with AQNWB
+    // TODO - replace with AQNWB
 	// const EventChannel* channel = getEventChannel(eventIndex);
 	// EventPtr eventStruct = Event::deserialize(event, channel);
 
@@ -144,37 +147,26 @@ void NWBRecordEngine::writeTimestampSyncText(uint64 streamId, int64 timestamp, f
 
 void NWBRecordEngine::writeSpike(int electrodeIndex, const Spike* spike) 
 {
-    // // extract info from spike channel
-	// const SpikeChannel* spikeChannel = getSpikeChannel(electrodeIndex);
-    // int nSamplesPerChannel = spikeChannel->getTotalSamples();
-    // int nChannels = spikeChannel->getNumChannels();
-    // int nSamples = nSamplesPerChannel * nChannels;
+    // extract info from spike channel
+	const SpikeChannel* spikeChannel = getSpikeChannel(electrodeIndex);
+    SizeType numSamplesPerChannel = static_cast<SizeType>(spikeChannel->getTotalSamples());
+    SizeType numChannels = static_cast<SizeType>(spikeChannel->getNumChannels());
+    SizeType numSamples = numSamplesPerChannel * numChannels;
+    
+    // extract info from spike object
+    double timestamps = spike->getTimestampInSeconds();
+    std::unique_ptr<int16_t[]> intData = AQNWB::transformToInt16(static_cast<SizeType>(numSamples), 
+                                                                 spikeChannel->getSourceChannels()[0]->getBitVolts(),
+                                                                 spike->getDataPointer());
 
-    // AQNWB::Channel* channel = nullptr;
-    // AQNWB::Types::SizeType datasetIndex = 0;
-    // for (auto& channelVector : this->recordingArrays) {  // TODO - maybe different from recordingArrays?
-    //     for (auto& ch : channelVector) {
-    //         if (ch.globalIndex == realChannel) {
-    //             channel = &ch;
-    //             break;
-    //         }
-    //     }
-    // }
+    // write spike data
+    this->recordingContainers->writeSpikeEventData(this->spikeContainerIndexes[electrodeIndex],
+                                                   numSamplesPerChannel,
+                                                   numChannels,
+                                                   intData.get(),
+                                                   &timestamps);
 
-    // // extract info from spike object
-    // double timestamps = spike->getTimestampInSeconds();
-    // std::unique_ptr<int16_t[]> intData = AQNWB::transformToInt16(static_cast<SizeType>(nSamples), 
-    //                                                              channel->getBitVolts(),
-    //                                                              spike->getDataPointer());
-
-    // // write spike data
-    // this->recordingContainers->writeSpikeData(this->spikeContainerIndexes[channel->groupIndex],
-    //                                           *channel,
-    //                                           static_cast<SizeType>(nChannels, SamplesPerChannel),
-    //                                           intData.get(),
-    //                                           &timestamps);
-
-                                                    // TODO - add writeEventMetadata functionalities
+    // TODO - add writeEventMetadata functionalities
 }
 
 void NWBRecordEngine::setParameter(EngineParameter& parameter)
@@ -186,10 +178,14 @@ void NWBRecordEngine::reset()
 {
    if (this->nwbfile != nullptr)
    {
-       this->recordingArrays.clear();
+       
        this->continuousChannels.clear();
        this->continuousChannelGroups.clear();
+       this->spikeChannels.clear();
+       
+       this->recordingArrays.clear();
        this->esContainerIndexes.clear();
+       this->spikeContainerIndexes.clear();
 
        this->nwbfile->finalize();
        this->nwbfile.reset();
@@ -205,7 +201,7 @@ void NWBRecordEngine::createRecordingArrays()
         this->continuousChannels.add(channelInfo);
     }
 
-    // group channels by stream
+    // add continuous channels
     int streamIndex = -1;
     uint16 lastStreamId = 0;
     for (int ch = 0; ch < getNumRecordedContinuousChannels(); ch++)
@@ -224,8 +220,13 @@ void NWBRecordEngine::createRecordingArrays()
         this->continuousChannelGroups.getReference(streamIndex).add(channelInfo);
         lastStreamId = channelInfo->getStreamId();        
     }
-    
-    // create recording arrays for nwb file
+
+    // add spike channels
+    for (int i = 0; i < getNumRecordedSpikeChannels(); i++) {
+        spikeChannels.add(getSpikeChannel(i));
+    }
+
+    // create recording arrays for continuous groups in nwb file
     for (int streamIndex = 0; streamIndex < this->continuousChannelGroups.size(); streamIndex++)
     {
         std::vector<AQNWB::Channel> channelVector;
@@ -239,6 +240,7 @@ void NWBRecordEngine::createRecordingArrays()
 
             channelVector.push_back(AQNWB::Channel(name, 
                                                    groupName,
+                                                   groupName,
                                                    streamIndex, 
                                                    channelInfo->getLocalIndex(),
                                                    channelInfo->getGlobalIndex(),
@@ -248,5 +250,33 @@ void NWBRecordEngine::createRecordingArrays()
         }
         this->recordingArrays.push_back(channelVector);
     }
-}
 
+    // create recording arrays for spike channels in nwb file
+    for (int i = 0; i < this->spikeChannels.size(); i++)
+    {
+        std::vector<AQNWB::Channel> channelVector;
+
+        const SpikeChannel* spikeChannel = this->spikeChannels[i];
+        std::string sourceName = spikeChannel->getSourceNodeName().toStdString() + "-"
+        + std::to_string(spikeChannel->getSourceNodeId())
+        + "." + spikeChannel->getStreamName().toStdString() + '.' + spikeChannel->getName().toStdString();
+
+        for (int ch = 0; ch < spikeChannel->getNumChannels(); ch++)
+        {   
+            const ContinuousChannel* schan = spikeChannel->getSourceChannels()[ch];
+            std::string continuousSourceName = schan->getSourceNodeName().toStdString() + "-"
+            + std::to_string(schan->getSourceNodeId())
+            + "." + schan->getStreamName().toStdString();  
+            AQNWB::Channel channel(schan->getName().toStdString(), 
+                                   sourceName,
+                                   continuousSourceName,
+                                   schan->getLocalIndex(),
+                                   schan->getGlobalIndex(),
+                                   1e6,
+                                   schan->getSampleRate(), 
+                                   schan->getBitVolts());
+            channelVector.push_back(channel);
+        }
+        this->spikeRecordingArrays.push_back(channelVector);
+    }
+}
