@@ -184,6 +184,7 @@ void NWBRecordEngine::reset()
        this->spikeChannels.clear();
        
        this->recordingArrays.clear();
+       this->spikeRecordingArrays.clear();
        this->esContainerIndexes.clear();
        this->spikeContainerIndexes.clear();
 
@@ -270,6 +271,7 @@ void NWBRecordEngine::createRecordingArrays()
             AQNWB::Channel channel(schan->getName().toStdString(), 
                                    sourceName,
                                    continuousSourceName,
+                                   i,
                                    schan->getLocalIndex(),
                                    schan->getGlobalIndex(),
                                    1e6,
