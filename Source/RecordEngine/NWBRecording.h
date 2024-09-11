@@ -98,9 +98,15 @@ namespace NWBRecording
 
         /** Holds channel information and ids */
         std::vector<AQNWB::Types::ChannelVector> recordingArrays;
+        
+        /** Holds names of the recordingArrays */
+        std::vector<std::string> recordingArraysNames;
 
         /** Holds channel information and ids */
         std::vector<AQNWB::Types::ChannelVector> spikeRecordingArrays;
+        
+        /** Holds names of the spikeRecordingArrays */
+        std::vector<std::string> spikeRecordingArraysNames; 
 
         /** Holds the indexes of the ElectricalSeries containers added to recordingContainers */
         std::vector<AQNWB::Types::SizeType> esContainerIndexes;
