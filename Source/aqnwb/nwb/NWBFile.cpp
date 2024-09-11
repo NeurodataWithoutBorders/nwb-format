@@ -102,6 +102,7 @@ Status NWBFile::createFileStructure(std::string description,
 
 Status NWBFile::createElectricalSeries(
     std::vector<Types::ChannelVector> recordingArrays,
+    std::vector<std::string> recordingNames,
     const BaseDataType& dataType,
     RecordingContainers* recordingContainers,
     std::vector<SizeType>& containerIndexes)
@@ -110,30 +111,42 @@ Status NWBFile::createElectricalSeries(
     return Status::Failure;
   }
 
+  if (recordingNames.size() != recordingArrays.size()) {
+    return Status::Failure;
+  }
+  
   // Setup electrode table if it was not yet created
   bool electrodeTableCreated =
       io->objectExists(ElectrodeTable::electrodeTablePath);
   if (!electrodeTableCreated) {
     elecTable = std::make_unique<ElectrodeTable>(io);
     elecTable->initialize();
+
+    // Add electrode information to table (does not write to datasets yet)
+    for (const auto& channelVector : recordingArrays) {
+      elecTable->addElectrodes(channelVector);
+    }
   }
 
-  // Create continuous datasets
-  for (const auto& channelVector : recordingArrays) {
+  // Create datasets
+  for (size_t i = 0; i < recordingArrays.size(); ++i) {
+    const auto& channelVector = recordingArrays[i];
+    const std::string& recordingName = recordingNames[i];
+
     // Setup electrodes and devices
     std::string groupName = channelVector[0].groupName;
-    std::string sourceName = channelVector[0].sourceName;
-    std::string devicePath = "/general/devices/" + sourceName;
-    std::string electrodePath = "/general/extracellular_ephys/" + sourceName;
-    std::string electricalSeriesPath = acquisitionPath + "/" + groupName;
+    std::string devicePath = "/general/devices/" + groupName;
+    std::string electrodePath = "/general/extracellular_ephys/" + groupName;
+    std::string electricalSeriesPath = acquisitionPath + "/" + recordingName;
 
-    // Check if device exists for groupName, create device and electrode group if not
-    if (!io->objectExists(devicePath)){
+    // Check if device exists for groupName, create device and electrode group
+    // if not
+    if (!io->objectExists(devicePath)) {
       Device device = Device(devicePath, io, "description", "unknown");
       device.initialize();
 
       ElectrodeGroup elecGroup =
-        ElectrodeGroup(electrodePath, io, "description", "unknown", device);
+          ElectrodeGroup(electrodePath, io, "description", "unknown", device);
       elecGroup.initialize();
     }
 
@@ -152,13 +165,9 @@ Status NWBFile::createElectricalSeries(
     containerIndexes.push_back(recordingContainers->containers.size() - 1);
   }
 
+  // write electrode information to datasets
+  // (requires that the ElectrodeGroup have been written)
   if (!electrodeTableCreated) {
-    // Add electrode information to table (does not write to datasets yet)
-    for (const auto& channelVector : recordingArrays) {
-      elecTable->addElectrodes(channelVector);
-    }
-
-    // write electrode information to datasets
     elecTable->finalize();
   }
 
@@ -167,11 +176,16 @@ Status NWBFile::createElectricalSeries(
 
 Status NWBFile::createSpikeEventSeries(
     std::vector<Types::ChannelVector> recordingArrays,
+    std::vector<std::string> recordingNames,
     const BaseDataType& dataType,
     RecordingContainers* recordingContainers,
     std::vector<SizeType>& containerIndexes)
 {
   if (!io->canModifyObjects()) {
+    return Status::Failure;
+  }
+
+  if (recordingNames.size() != recordingArrays.size()) {
     return Status::Failure;
   }
 
@@ -181,24 +195,32 @@ Status NWBFile::createSpikeEventSeries(
   if (!electrodeTableCreated) {
     elecTable = std::make_unique<ElectrodeTable>(io);
     elecTable->initialize();
+    
+    // Add electrode information to table (does not write to datasets yet)
+    for (const auto& channelVector : recordingArrays) {
+      elecTable->addElectrodes(channelVector);
+    }
   }
 
-  // Create continuous datasets
-  for (const auto& channelVector : recordingArrays) {
-    // Setup electrodes and devices
-    std::string groupName = channelVector[0].groupName;
-    std::string sourceName = channelVector[0].sourceName;
-    std::string devicePath = "/general/devices/" + sourceName;
-    std::string electrodePath = "/general/extracellular_ephys/" + sourceName;
-    std::string spikeEventSeriesPath = acquisitionPath + "/" + groupName;
+  // Create datasets
+  for (size_t i = 0; i < recordingArrays.size(); ++i) {
+    const auto& channelVector = recordingArrays[i];
+    const std::string& recordingName = recordingNames[i];
 
-    // Check if device exists for groupName, create device and electrode group if not
-    if (!io->objectExists(devicePath)){
+    // Setup electrodes and devices
+    std::string groupName = channelVector[0].groupName;  
+    std::string devicePath = "/general/devices/" + groupName;
+    std::string electrodePath = "/general/extracellular_ephys/" + groupName;
+    std::string spikeEventSeriesPath = acquisitionPath + "/" + recordingName;
+
+    // Check if device exists for groupName, create device and electrode group
+    // if not
+    if (!io->objectExists(devicePath)) {
       Device device = Device(devicePath, io, "description", "unknown");
       device.initialize();
 
       ElectrodeGroup elecGroup =
-        ElectrodeGroup(electrodePath, io, "description", "unknown", device);
+          ElectrodeGroup(electrodePath, io, "description", "unknown", device);
       elecGroup.initialize();
     }
 
@@ -226,13 +248,9 @@ Status NWBFile::createSpikeEventSeries(
     containerIndexes.push_back(recordingContainers->containers.size() - 1);
   }
 
+  // write electrode information to datasets
+  // (requires that the ElectrodeGroup have been written)
   if (!electrodeTableCreated) {
-    // Add electrode information to table (does not write to datasets yet)
-    for (const auto& channelVector : recordingArrays) {
-      elecTable->addElectrodes(channelVector);
-    }
-
-    // write electrode information to datasets
     elecTable->finalize();
   }
 
