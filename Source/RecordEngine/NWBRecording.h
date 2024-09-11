@@ -80,9 +80,6 @@ namespace NWBRecording
         /** Allows the file identifier to be set externally*/
         void setParameter(EngineParameter &parameter) override;
 
-        /** Reset the engine */
-        void reset();
-
         /** Create recording arrays */
         void createRecordingArrays();
 

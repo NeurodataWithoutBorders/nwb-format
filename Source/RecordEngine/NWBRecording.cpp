@@ -41,7 +41,21 @@
 
  NWBRecordEngine::~NWBRecordEngine()
  {    
-    NWBRecordEngine::reset();
+   if (this->nwbfile != nullptr)
+   {
+       
+       this->continuousChannels.clear();
+       this->continuousChannelGroups.clear();
+       this->spikeChannels.clear();
+       
+       this->recordingArrays.clear();
+       this->spikeRecordingArrays.clear();
+       this->esContainerIndexes.clear();
+       this->spikeContainerIndexes.clear();
+
+       this->nwbfile->finalize();
+       this->nwbfile.reset();
+   }
  }
 
 RecordEngineManager* NWBRecordEngine::getEngineManager()
@@ -60,7 +74,20 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
      if (recordingNumber == 0) // new file needed
      {  
         // clear any existing data and nwbfile
-        NWBRecordEngine::reset();
+        this->continuousChannels.clear();
+        this->continuousChannelGroups.clear();
+        this->spikeChannels.clear();
+        
+        this->recordingArrays.clear();
+        this->spikeRecordingArrays.clear();
+        this->esContainerIndexes.clear();
+        this->spikeContainerIndexes.clear();
+        
+        if (this->nwbfile != nullptr)
+        {
+            this->nwbfile->finalize();
+            this->nwbfile.reset();
+        }
 
         // create the io object
         char separator = std::filesystem::path::preferred_separator;
@@ -172,27 +199,6 @@ void NWBRecordEngine::writeSpike(int electrodeIndex, const Spike* spike)
 void NWBRecordEngine::setParameter(EngineParameter& parameter)
 {
 	strParameter(0, identifierText);
-}
-
-void NWBRecordEngine::reset()
-{
-   if (this->nwbfile != nullptr)
-   {
-       
-       this->continuousChannels.clear();
-       this->continuousChannelGroups.clear();
-       this->spikeChannels.clear();
-       
-       this->recordingArrays.clear();
-       this->recordingArraysNames.clear();
-       this->spikeRecordingArrays.clear();
-       this->spikeRecordingArraysNames.clear();
-       this->esContainerIndexes.clear();
-       this->spikeContainerIndexes.clear();
-
-       this->nwbfile->finalize();
-       this->nwbfile.reset();
-   }
 }
 
 void NWBRecordEngine::createRecordingArrays()
