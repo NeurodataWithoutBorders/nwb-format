@@ -1,0 +1,3 @@
+[submodule "Source/aqnwb"]
+	path = Source/aqnwb
+	url = https://github.com/NeurodataWithoutBorders/aqnwb
