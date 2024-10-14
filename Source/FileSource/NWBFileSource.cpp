@@ -203,7 +203,7 @@ void NWBFileSource::fillRecordInfo()
                         {
                             info.channels.push_back (abs (stateArray[k]));
                             info.channelStates.push_back (stateArray[k] > 0);
-                            info.timestamps.push_back (tsArray[k] - startSampleNumbers[dataSourceName]);
+                            info.sampleNumbers.push_back (tsArray[k] - startSampleNumbers[dataSourceName]);
                         }
 
                         eventInfoMap[dataSourceName] = info;
@@ -266,16 +266,14 @@ void NWBFileSource::seekTo (int64 sample)
     samplePos = sample % getActiveNumSamples();
 }
 
-int NWBFileSource::readData (int16* buffer, int nSamples)
+int NWBFileSource::readData (float* buffer, int nSamples)
 {
-    DataSpace fSpace, mSpace;
-    int samplesToRead;
+    int64 samplesToRead;
     int nChannels = getActiveNumChannels();
-    hsize_t dim[3], offset[3];
 
     if (samplePos + nSamples > getActiveNumSamples())
     {
-        samplesToRead = (int) getActiveNumSamples() - (int) samplePos;
+        samplesToRead = getActiveNumSamples() - samplePos;
     }
     else
     {
@@ -284,20 +282,25 @@ int NWBFileSource::readData (int16* buffer, int nSamples)
 
     try
     {
-        fSpace = dataSet->getSpace();
-        dim[0] = samplesToRead;
-        dim[1] = nChannels;
-        dim[2] = 1;
-        offset[0] = samplePos;
-        offset[1] = 0;
-        offset[2] = 0;
+        DataSpace fSpace = dataSet->getSpace();
+        hsize_t dim[2] = {static_cast<hsize_t>(samplesToRead), static_cast<hsize_t>(nChannels)};
+        hsize_t offset[2] = {static_cast<hsize_t>(samplePos), 0};
 
-        fSpace.selectHyperslab (H5S_SELECT_SET, dim, offset);
-        mSpace = DataSpace (2, dim);
+        fSpace.selectHyperslab(H5S_SELECT_SET, dim, offset);
+        DataSpace mSpace(2, dim);
 
-        dataSet->read (buffer, PredType::NATIVE_INT16, mSpace, fSpace);
+        // Read data into a temporary int16 buffer
+        HeapBlock<int16> tempBuffer(samplesToRead * nChannels);
+        dataSet->read(tempBuffer.getData(), PredType::NATIVE_INT16, mSpace, fSpace);
+
+        // Convert int16 to float and apply bitVolts
+        for (int i = 0; i < samplesToRead * nChannels; i++)
+        {
+            *(buffer + i) = tempBuffer[i] * getChannelInfo(activeRecord.get(), i % nChannels).bitVolts;
+        }
+
         samplePos += samplesToRead;
-        return samplesToRead;
+        return static_cast<int>(samplesToRead);
     }
     catch (DataSetIException error)
     {
@@ -309,9 +312,9 @@ int NWBFileSource::readData (int16* buffer, int nSamples)
         PROCESS_ERROR;
         return 0;
     }
-    return 0;
 }
 
+/* DEPRECATED: Convert nSamples of data from int16 to float
 void NWBFileSource::processChannelData (int16* inBuffer, float* outBuffer, int channel, int64 numSamples)
 {
     int n = getActiveNumChannels();
@@ -322,6 +325,7 @@ void NWBFileSource::processChannelData (int16* inBuffer, float* outBuffer, int c
         *(outBuffer + i) = *(inBuffer + (n * i) + channel) * bitVolts;
     }
 }
+*/
 
 void NWBFileSource::processEventData (EventInfo& eventInfo, int64 start, int64 stop)
 {
@@ -334,13 +338,13 @@ void NWBFileSource::processEventData (EventInfo& eventInfo, int64 start, int64 s
 
     int i = 0;
 
-    while (i < info.timestamps.size())
+    while (i < info.sampleNumbers.size())
     {
-        if (info.timestamps[i] >= local_start && info.timestamps[i] < local_stop)
+        if (info.sampleNumbers[i] >= local_start && info.sampleNumbers[i] < local_stop)
         {
             eventInfo.channels.push_back (info.channels[i] - 1);
             eventInfo.channelStates.push_back ((info.channelStates[i]));
-            eventInfo.timestamps.push_back (info.timestamps[i] + loop_count * getActiveNumSamples());
+            eventInfo.sampleNumbers.push_back (info.sampleNumbers[i] + loop_count * getActiveNumSamples());
         }
         i++;
     }

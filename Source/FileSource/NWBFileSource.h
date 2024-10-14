@@ -60,13 +60,13 @@ public:
     void updateActiveRecord (int index) override;
 
     /** Reads nSamples of int16 data into a temporary buffer */
-    int readData (int16* buffer, int nSamples) override;
+    int readData (float* buffer, int nSamples) override;
 
     /** Seek to a specific sample number within the active recordinfg*/
     void seekTo (int64 sample) override;
 
-    /** Convert nSamples of data from int16 to float */
-    void processChannelData (int16* inBuffer, float* outBuffer, int channel, int64 numSamples) override;
+    /** DEPRECATED: Convert nSamples of data from int16 to float */
+    //void processChannelData (int16* inBuffer, float* outBuffer, int channel, int64 numSamples) override;
 
     /** Add info about events occurring within a sample range */
     void processEventData (EventInfo& info, int64 startTimestamp, int64 stopTimestamp) override;
