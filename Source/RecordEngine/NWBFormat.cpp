@@ -118,15 +118,16 @@ TimeSeries::TimeSeries (String rootPath, String name, String description_)
 {
 }
 
-ecephys::ElectricalSeries::ElectricalSeries (String rootPath, String name, String description_, int channel_count_, Array<float> channel_conversion_)
+ecephys::ElectricalSeries::ElectricalSeries (String rootPath, String name, String description_, int channel_count_, Array<float> channel_conversion_, Array<uint8> channel_type_)
     : TimeSeries (rootPath, name, description_),
       channel_conversion (channel_conversion_),
+      channel_type (channel_type_),
       channel_count (channel_count_)
 {
 }
 
-ecephys::SpikeEventSeries::SpikeEventSeries (String rootPath, String name, String description_, int channel_count, Array<float> channel_conversion_)
-    : ecephys::ElectricalSeries (rootPath, name, description_, channel_count, channel_conversion_)
+ecephys::SpikeEventSeries::SpikeEventSeries (String rootPath, String name, String description_, int channel_count, Array<float> channel_conversion_, Array<uint8> channel_type_)
+    : ecephys::ElectricalSeries (rootPath, name, description_, channel_count, channel_conversion_, channel_type_)
 {
 }
 
@@ -187,6 +188,12 @@ bool NWBFile::startNewRecording (
                            + String (group[0]->getSourceNodeId())
                            + "." + group[0]->getStreamName();
 
+        Array<uint8> channel_type;
+        for (int ch = 0; ch < group.size(); ch++)
+        {
+            channel_type.add (group[ch]->getChannelType());
+        }
+
         String fullPath = "general/extracellular_ephys/" + groupName;
         createGroup (fullPath);
         setAttributeStr ("description", fullPath, "description");
@@ -217,7 +224,8 @@ bool NWBFile::startNewRecording (
                                            groupName,
                                            "Stores continuously sampled voltage data from an extracellular ephys recording",
                                            group.size(),
-                                           channel_conversion);
+                                           channel_conversion,
+                                           channel_type);
 
         if (recordingNumber == 0)
             if (! createTimeSeriesBase (electricalSeries))
@@ -254,6 +262,12 @@ bool NWBFile::startNewRecording (
         if (electricalSeries->channelConversionDataSet == nullptr)
             return false;
         writeChannelConversions (electricalSeries);
+
+        electricalSeries->channelTypesDataSet = createChannelTypesDataSet (electricalSeries->basePath + "/channel_type", "Channel types for all channels", CHUNK_XSIZE);
+
+        if (electricalSeries->channelTypesDataSet == nullptr)
+            return false;
+        writeChannelTypes (electricalSeries);
 
         electricalSeries->electrodeDataSet = createElectrodeDataSet (electricalSeries->basePath + "/electrodes", "Electrode index for each channel", CHUNK_XSIZE);
 
@@ -573,6 +587,15 @@ void NWBFile::writeChannelConversions (ecephys::ElectricalSeries* electricalSeri
     CHECK_ERROR (electricalSeries->channelConversionDataSet->writeDataBlock (conversions.size(), BaseDataType::F32, &conversions[0]));
 }
 
+void NWBFile::writeChannelTypes (ecephys::ElectricalSeries* electricalSeries)
+{
+    std::vector<uint8> channel_type;
+    for (auto i : electricalSeries->channel_type)
+        channel_type.push_back (i);
+
+    CHECK_ERROR (electricalSeries->channelTypesDataSet->writeDataBlock (channel_type.size(), BaseDataType::U8, &channel_type[0]));
+}
+
 void NWBFile::writeElectrodes (ecephys::ElectricalSeries* electricalSeries, Array<int> electrodeInds)
 {
     std::vector<int> electrodeNumbers;
@@ -756,6 +779,16 @@ HDF5RecordingData* NWBFile::createChannelConversionDataSet (String path, String 
         CHECK_ERROR (setAttributeStr ("hdmf-common", path, "namespace"));
         CHECK_ERROR (setAttributeStr (generateUuid(), path, "object_id"));
     }
+    return elSet;
+}
+
+HDF5RecordingData* NWBFile::createChannelTypesDataSet (String path, String description, int chunk_size)
+{
+    HDF5RecordingData* elSet = createDataSet (BaseDataType::U8, 1, chunk_size, path);
+    if (! elSet)
+        std::cerr << "Error creating electrode dataset in " << path << std::endl;
+    else
+        CHECK_ERROR (setAttributeStr (description, path, "description"));
     return elSet;
 }
 

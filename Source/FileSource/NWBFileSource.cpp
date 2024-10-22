@@ -154,13 +154,18 @@ void NWBFileSource::fillRecordInfo()
                         data = dataSource.openDataSet ("channel_conversion");
                         data.read (ccArray.getData(), PredType::NATIVE_FLOAT);
 
+                        HeapBlock<uint8> ctArray (dims[1]);
+                        data = dataSource.openDataSet ("channel_type");
+                        data.read (ctArray.getData(), PredType::NATIVE_UINT8);
+
                         try
                         {
                             for (int k = 0; k < dims[1]; k++)
                             {
                                 RecordedChannelInfo c;
                                 c.name = "CH" + String (k);
-                                c.bitVolts = ccArray[k] * 1e6;
+                                c.bitVolts = ccArray[k] * 1e6; //TOFIX? Scaling should depend on channel type?
+                                c.type = ctArray[k];
                                 info.channels.add (c);
                             }
                             infoArray.add (info);

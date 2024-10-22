@@ -78,16 +78,22 @@ namespace ecephys
     {
     public:
         /** Constructor */
-        ElectricalSeries (String rootPath, String name, String description, int channel_count, Array<float> channel_conversion);
+        ElectricalSeries (String rootPath, String name, String description, int channel_count, Array<float> channel_conversion, Array<uint8> channel_type);
 
         /** Holds the sample number for each sample (relative to the start of acquisition) */
         ScopedPointer<HDF5RecordingData> channelConversionDataSet;
+
+        /** Holds the channel types */
+        ScopedPointer<HDF5RecordingData> channelTypesDataSet;
 
         /** Holds the DynamicTableRegion index of each electrode  */
         ScopedPointer<HDF5RecordingData> electrodeDataSet;
 
         /** Channel conversion values */
         Array<float> channel_conversion;
+
+        /** Channel types */
+        Array<uint8> channel_type;
 
         /** Number of channels to write */
         int channel_count;
@@ -103,7 +109,7 @@ namespace ecephys
     {
     public:
         /** Constructor */
-        SpikeEventSeries (String rootPath, String name, String description, int channel_count, Array<float> channel_conversion);
+        SpikeEventSeries (String rootPath, String name, String description, int channel_count, Array<float> channel_conversion, Array<uint8> channel_type = {});
 
         /** Get neurodata_type */
         virtual String getNeurodataType() override { return "SpikeEventSeries"; }
@@ -178,6 +184,9 @@ public:
     /** Writes channel conversion values */
     void writeChannelConversions (ecephys::ElectricalSeries* series);
 
+    /** Writes channel types */
+    void writeChannelTypes (ecephys::ElectricalSeries* series);
+
     /** Writes a spike event*/
     void writeSpike (int electrodeId, const SpikeChannel* channel, const Spike* event);
 
@@ -238,6 +247,9 @@ private:
 
     /** Creates a dataset for electrode indices */
     HDF5RecordingData* createChannelConversionDataSet (String basePath, String description, int chunk_size);
+
+    /** Creates a dataset for channel types */
+    HDF5RecordingData* createChannelTypesDataSet (String basePath, String description, int chunk_size);
 
     /** Adds attributes (e.g. conversion, resolution) to a continuous dataset */
     void createDataAttributes (String basePath, float conversion, float resolution, String unit);
