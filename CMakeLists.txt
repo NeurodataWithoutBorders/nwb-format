@@ -73,7 +73,14 @@ elseif(LINUX)
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
 		"-fvisibility=hidden -fPIC -rdynamic -Wl,-rpath='$ORIGIN/../shared' -Wl,-rpath='$ORIGIN/../shared-api10'")
 	target_compile_options(${PLUGIN_NAME} PRIVATE -fPIC -rdynamic)
-	target_compile_options(${PLUGIN_NAME} PRIVATE -O0) #enable optimization for linux debug
+
+	if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+		target_compile_options(${PLUGIN_NAME} PRIVATE -O0)
+	elseif (${CMAKE_BUILD_TYPE} STREQUAL "Release")
+		target_compile_options(${PLUGIN_NAME} PRIVATE -O3)
+	else()
+		message(FATAL_ERROR "Invalid build type")
+	endif()
 
 	install(TARGETS ${PLUGIN_NAME} LIBRARY DESTINATION ${GUI_BIN_DIR}/plugins)
 	set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/libs/linux)
