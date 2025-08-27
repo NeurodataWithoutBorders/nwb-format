@@ -1,42 +1,45 @@
 name: Windows
 
-on: 
+on:
   push:
+    branches:
+      - '**' # Runs on push to any branch
+    tags:
+      - '*' # Runs on any tag push
+  pull_request:
+    branches:
+      - main # Runs on pull requests targeting the main branch
 
 jobs:
 
   build-windows:
-
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-2019]
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    runs-on: windows-latest
     
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     - name: setup
-      env: 
-        repo: open-ephys-gui
-        package: "open-ephys-lib"
       run: |
         cd ../..
         git clone https://github.com/open-ephys/plugin-GUI.git --branch main
         cd plugin-GUI/Build
-        cmake -G "Visual Studio 16 2019" -A x64 .. 
+        cmake -G "Visual Studio 17 2022" -A x64 .. 
         mkdir Release && cd Release
-        curl -L https://openephysgui.jfrog.io/artifactory/Libraries/open-ephys-lib-v0.6.0.zip --output open-ephys-lib.zip 
+        curl -L https://openephys.jfrog.io/artifactory/GUI-binaries/Libraries/open-ephys-lib-v1.0.0.zip --output open-ephys-lib.zip
         unzip open-ephys-lib.zip
       shell: bash
     - name: config-hdf5lib
       run: |
         cd ../..
         mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysHDF5Lib.git
+        git clone https://github.com/open-ephys-plugins/OpenEphysHDF5Lib.git --branch main
         cd OpenEphysHDF5Lib/Build
-        cmake -G "Visual Studio 16 2019" -A x64 ..
+        cmake -G "Visual Studio 17 2022" -A x64 ..
       shell: bash
     - name: Add msbuild to PATH
-      uses: microsoft/setup-msbuild@v1.0.2
+      uses: microsoft/setup-msbuild@v2
     - name: build-hdf5lib
       run: |
         msbuild ../../OEPlugins/OpenEphysHDF5Lib/Build/INSTALL.vcxproj -p:Configuration=Release -p:Platform=x64
@@ -44,7 +47,7 @@ jobs:
     - name: configure
       run: |
         cd Build
-        cmake -G "Visual Studio 16 2019" -A x64 .. 
+        cmake -G "Visual Studio 17 2022" -A x64 .. 
       shell: bash
     - name: build
       run: |
@@ -56,16 +59,16 @@ jobs:
     - name: deploy
       if: github.ref == 'refs/heads/main'
       env:
-        artifactoryApiKey: ${{ secrets.artifactoryApiKey }}
+        ARTIFACTORY_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
         build_dir: "Build/Release"
         package: NWBFormat-windows
       run: |
         plugin_api=$(grep -rnw ../../plugin-GUI/Source -e '#define PLUGIN_API_VER' | grep -Eo "[0-9]*" | tail -1)
-        tag=$(git describe --tags $(git rev-list --tags --max-count=1))
+        tag=$(grep -w Source/OpenEphysLib.cpp -e 'info->libVersion' | grep -Eo "[0-9]+.[0-9]+.[0-9]+")
         new_plugin_ver=$tag-API$plugin_api
         mkdir plugins
         cp -v $build_dir/*.dll plugins
         zipfile=${package}_${new_plugin_ver}.zip
         powershell Compress-Archive -Path "plugins" -DestinationPath ${zipfile}
-        curl -H "X-JFrog-Art-Api:$artifactoryApiKey" -T $zipfile "https://openephys.jfrog.io/artifactory/NWBFormat-plugin/windows/$zipfile"
+        curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/NWBFormat-plugin/windows/$zipfile"
       shell: bash

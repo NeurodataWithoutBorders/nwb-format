@@ -1,23 +1,23 @@
 /*
- ------------------------------------------------------------------
+    ------------------------------------------------------------------
 
- This file is part of the Open Ephys GUI
- Copyright (C) 2014 Open Ephys
+    This file is part of the Open Ephys GUI
+    Copyright (C) 2024 Open Ephys
 
- ------------------------------------------------------------------
+    ------------------------------------------------------------------
 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
 
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
 
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
  */
  
@@ -29,7 +29,6 @@
 #include "Utils.hpp"
 
 #include "../../plugin-GUI/Source/Processors/RecordNode/RecordNode.h"
-
 
 #define MAX_BUFFER_SIZE 40960
  
@@ -47,6 +46,7 @@
        this->continuousChannels.clear();
        this->continuousChannelGroups.clear();
        this->spikeChannels.clear();
+       this->eventChannels.clear();
        
        this->recordingArrays.clear();
        this->spikeRecordingArrays.clear();
@@ -61,10 +61,10 @@
 RecordEngineManager* NWBRecordEngine::getEngineManager()
 {
     //static factory that instantiates the engine manager, which allows to configure recording options among other things. See OriginalRecording to see how to create options for a record engine
-    RecordEngineManager* man = new RecordEngineManager("NWB2", "NWB2", &(engineFactory<NWBRecordEngine>));
+    RecordEngineManager* man = new RecordEngineManager ("NWB2", "NWB2", &(engineFactory<NWBRecordEngine>) );
     EngineParameter* param;
-    param = new EngineParameter(EngineParameter::STR, 0, "Identifier Text", String());
-    man->addParameter(param);
+    param = new EngineParameter (EngineParameter::STR, 0, "Identifier Text", String());
+    man->addParameter (param);
     return man;
 }
 
@@ -77,6 +77,7 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
         this->continuousChannels.clear();
         this->continuousChannelGroups.clear();
         this->spikeChannels.clear();
+        this->eventChannels.clear();
         
         this->recordingArrays.clear();
         this->spikeRecordingArrays.clear();
@@ -165,14 +166,13 @@ void NWBRecordEngine::writeEvent(int eventIndex, const MidiMessage& event)
 	// nwb->writeEvent(eventIndex, channel, eventStruct);
 }
 
-void NWBRecordEngine::writeTimestampSyncText(uint64 streamId, int64 timestamp, float sourceSampleRate, String text)
+void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 timestamp, float sourceSampleRate, String text)
 {
     // TODO - replacew with AQNWB
 	// nwb->writeTimestampSyncText(streamId, timestamp, sourceSampleRate, text);
 }
 
-
-void NWBRecordEngine::writeSpike(int electrodeIndex, const Spike* spike) 
+void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
 {
     // extract info from spike channel
 	const SpikeChannel* spikeChannel = getSpikeChannel(electrodeIndex);
@@ -198,7 +198,7 @@ void NWBRecordEngine::writeSpike(int electrodeIndex, const Spike* spike)
 
 void NWBRecordEngine::setParameter(EngineParameter& parameter)
 {
-	strParameter(0, identifierText);
+    strParameter (0, identifierText);
 }
 
 void NWBRecordEngine::createRecordingArrays()

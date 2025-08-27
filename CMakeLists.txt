@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5.0)
+cmake_minimum_required(VERSION 3.15)
 if (NOT DEFINED GUI_BASE_DIR)
 	if (DEFINED ENV{GUI_BASE_DIR})
 		set(GUI_BASE_DIR $ENV{GUI_BASE_DIR})
@@ -10,7 +10,7 @@ endif()
 get_filename_component(PROJECT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR} ABSOLUTE)
 get_filename_component(PLUGIN_NAME ${PROJECT_FOLDER} NAME)
 
-set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Build architecture for Mac OS X" FORCE)
+set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build architecture for Mac OS X" FORCE)
 
 project(OE_PLUGIN_${PLUGIN_NAME})
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
@@ -74,18 +74,25 @@ if(MSVC)
 elseif(LINUX)
 	target_link_libraries(${PLUGIN_NAME} GL X11 Xext Xinerama asound dl freetype pthread rt)
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
-		"-fvisibility=hidden -fPIC -rdynamic -Wl,-rpath='$ORIGIN/../shared' -Wl,-rpath='$ORIGIN/../shared-api8'")
+		"-fvisibility=hidden -fPIC -rdynamic -Wl,-rpath='$ORIGIN/../shared' -Wl,-rpath='$ORIGIN/../shared-api10'")
 	target_compile_options(${PLUGIN_NAME} PRIVATE -fPIC -rdynamic)
-	target_compile_options(${PLUGIN_NAME} PRIVATE -O0) #enable optimization for linux debug
+
+	if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+		target_compile_options(${PLUGIN_NAME} PRIVATE -O0)
+	elseif (${CMAKE_BUILD_TYPE} STREQUAL "Release")
+		target_compile_options(${PLUGIN_NAME} PRIVATE -O3)
+	else()
+		message(FATAL_ERROR "Invalid build type")
+	endif()
 
 	install(TARGETS ${PLUGIN_NAME} LIBRARY DESTINATION ${GUI_BIN_DIR}/plugins)
 	set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/libs/linux)
 elseif(APPLE)
 	set_target_properties(${PLUGIN_NAME} PROPERTIES BUNDLE TRUE)
 	set_property(TARGET ${PLUGIN_NAME} APPEND_STRING PROPERTY LINK_FLAGS
-	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared-api8")
+	"-undefined dynamic_lookup -rpath @loader_path/../../../../shared-api10")
 
-	install(TARGETS ${PLUGIN_NAME} DESTINATION $ENV{HOME}/Library/Application\ Support/open-ephys/plugins-api8)
+	install(TARGETS ${PLUGIN_NAME} DESTINATION $ENV{HOME}/Library/Application\ Support/open-ephys/plugins-api10)
 	set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/libs/macos)
 endif()
 
@@ -99,7 +106,7 @@ foreach( src_file IN ITEMS ${SRC_FILES})
 endforeach()
 
 #additional libraries needed
-find_package(HDF5 1.12.1 EXACT COMPONENTS C CXX)
+find_package(HDF5 1.14.3 EXACT COMPONENTS C CXX)
 
 if(NOT HDF5_FOUND) #if package finding fails, try manually
 	#unset variables in case a wrong version has been found
