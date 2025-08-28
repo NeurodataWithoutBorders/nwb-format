@@ -34,6 +34,7 @@ set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS
 
 set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 file(GLOB_RECURSE SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h" "${SOURCE_PATH}/*.hpp")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/aqnwb/(tests|demo)/.*")
 set(GUI_COMMONLIB_DIR ${GUI_BASE_DIR}/installed_libs)
 
 include_directories(${SOURCE_PATH}/aqnwb/src)
