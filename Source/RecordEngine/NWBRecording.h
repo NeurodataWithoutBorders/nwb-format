@@ -26,7 +26,7 @@
 
 #include <RecordingLib.h>
 
-#include "BaseIO.hpp"
+#include "io/BaseIO.hpp"
 #include "nwb/NWBFile.hpp"
 #include "nwb/RecordingContainers.hpp"
 
@@ -91,7 +91,7 @@ private:
     std::unique_ptr<AQNWB::NWB::RecordingContainers> recordingContainers;
 
     /** NWB I/O object */
-    std::shared_ptr<AQNWB::BaseIO> io;
+    std::shared_ptr<AQNWB::IO::BaseIO> io;
 
     /** Holds channel information and ids */
     std::vector<AQNWB::Types::ChannelVector> recordingArrays;

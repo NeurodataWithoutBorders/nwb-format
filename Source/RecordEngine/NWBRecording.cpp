@@ -97,27 +97,36 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
         "experiment_aqnwb" + std::to_string(experimentNumber) + ".nwb";
 
         this->io = AQNWB::createIO("HDF5", filename);
+        this->io->open();
 
         // create recording array mapping for channel information
         NWBRecordEngine::createRecordingArrays();
 
         // create the nwbfile
         std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
-        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(AQNWB::generateUuid(), io);
-        this->nwbfile->initialize("Recording with the Open Ephys GUI", dataCollection);  
+        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(this->io);
+        Status initStatus = this->nwbfile->initialize(AQNWB::generateUuid(), "Recording with the Open Ephys GUI", dataCollection);
+        AQNWB::checkStatus(initStatus, "NWBFile initialization");
         // TODO - have option to initialize cache size based on # of channels
+
+        // create the electrodes table
+        Status elecTableStatus = this->nwbfile->createElectrodesTable(this->recordingArrays);
+        AQNWB::checkStatus(elecTableStatus, "Electrodes table initialization");
 
         // create recording containers
         this->recordingContainers = std::make_unique<AQNWB::NWB::RecordingContainers>();
-        this->nwbfile->createElectricalSeries(
-            this->recordingArrays, this->recordingArraysNames, AQNWB::BaseDataType::I16, this->recordingContainers.get(), this->esContainerIndexes); 
+        Status elecSeriesStatus = this->nwbfile->createElectricalSeries(
+            this->recordingArrays, this->recordingArraysNames, AQNWB::IO::BaseDataType::I16, this->recordingContainers.get(), this->esContainerIndexes);
+        AQNWB::checkStatus(elecSeriesStatus, "ElectricalSeries creation");
         // TODO add io_settings to set chunk size for different data types
 
-        this->nwbfile->createSpikeEventSeries(
-            this->spikeRecordingArrays, this->spikeRecordingArraysNames, AQNWB::BaseDataType::I16, this->recordingContainers.get(), this->spikeContainerIndexes);       
+        Status spikeEventSeriesStatus = this->nwbfile->createSpikeEventSeries(
+            this->spikeRecordingArrays, this->spikeRecordingArraysNames, AQNWB::IO::BaseDataType::I16, this->recordingContainers.get(), this->spikeContainerIndexes);       
+        AQNWB::checkStatus(spikeEventSeriesStatus, "SpikeEventSeries creation");
 
         // start recording
-        this->io->startRecording();
+        Status startRecordingStatus = this->io->startRecording();
+        AQNWB::checkStatus(startRecordingStatus, "Start recording");
     }
  }
 
@@ -140,7 +149,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
     AQNWB::Types::SizeType datasetIndex = 0;
     for (auto& channelVector : this->recordingArrays) {
         for (auto& ch : channelVector) {
-            if (ch.globalIndex == realChannel) {
+            if (ch.getGlobalIndex() == realChannel) {
                 channel = &ch;
                 break;
             }
@@ -148,7 +157,7 @@ void NWBRecordEngine::writeContinuousData(int writeChannel,
     }
 
     std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts(), dataBuffer);
-    this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[channel->groupIndex],
+    this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[channel->getGroupIndex()],
                                             *channel,
                                             static_cast<SizeType>(size),
                                             intBuffer.get(),
@@ -257,7 +266,7 @@ void NWBRecordEngine::createRecordingArrays()
                                                    channelInfo->getBitVolts()));
         }
         this->recordingArrays.push_back(channelVector);
-        this->recordingArraysNames.push_back(channelVector[0].groupName);
+        this->recordingArraysNames.push_back(channelVector[0].getGroupName());
     }
 
     // create recording arrays for spike channels in nwb file
