@@ -435,7 +435,10 @@ void NWBRecordEngine::createRecordingArrays()
                                  + "." + spikeChannel->getStreamName().toStdString()
                                  + "." + spikeChannel->getName().toStdString();
 
+        // As in the Binary format, all channels of a spike waveform are converted to int16 with the
+        // bitVolts of the first channel (see writeSpike), so use the same factor for all channels
         AQNWB::Types::ChannelVector channelVector;
+        const float spikeBitVolts = spikeChannel->getChannelBitVolts (0);
         for (int ch = 0; ch < spikeChannel->getNumChannels(); ch++)
         {
             const ContinuousChannel* sourceChannel = spikeChannel->getSourceChannels()[ch];
@@ -446,7 +449,7 @@ void NWBRecordEngine::createRecordingArrays()
                                                      static_cast<SizeType> (sourceChannel->getGlobalIndex()),
                                                      1e6f,
                                                      sourceChannel->getSampleRate(),
-                                                     sourceChannel->getBitVolts()));
+                                                     spikeBitVolts));
         }
         spikeRecordingArrays.push_back (channelVector);
         spikeRecordingArraysNames.push_back (sourceName);
