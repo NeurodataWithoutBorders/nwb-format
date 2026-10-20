@@ -26,9 +26,9 @@
 
 #include <RecordingLib.h>
 
+#include "Channel.hpp"
 #include "io/BaseIO.hpp"
 #include "nwb/NWBFile.hpp"
-#include "nwb/RecordingContainers.hpp"
 
 typedef Array<const ContinuousChannel*> ContinuousGroup;
 
@@ -80,52 +80,61 @@ public:
     /** Allows the file identifier to be set externally*/
     void setParameter (EngineParameter& parameter) override;
 
-    /** Create recording arrays */
+private:
+    /** Collect the channel information and create the AqNWB channel mappings */
     void createRecordingArrays();
 
-private:
-    /** NWB file */
-    std::unique_ptr<AQNWB::NWB::NWBFile> nwbfile;
+    /** Finalize and close the current file (if any) and release all recording objects */
+    void closeFile();
 
-    /** NWB recording container manager */
-    std::unique_ptr<AQNWB::NWB::RecordingContainers> recordingContainers;
+    /** Log a failed AqNWB operation. Returns true if the status indicates success. */
+    static bool checkStatus (AQNWB::Types::Status status, const String& operation);
 
     /** NWB I/O object */
     std::shared_ptr<AQNWB::IO::BaseIO> io;
 
-    /** Holds channel information and ids */
+    /** NWB file */
+    std::shared_ptr<AQNWB::NWB::NWBFile> nwbfile;
+
+    /** AqNWB channels for all continuous channels entering the Record Node, grouped by stream (electrodes table) */
+    std::vector<AQNWB::Types::ChannelVector> electrodeArrays;
+
+    /** AqNWB channels for the recorded continuous channels, one ChannelVector per stream (ElectricalSeries) */
     std::vector<AQNWB::Types::ChannelVector> recordingArrays;
-    
-    /** Holds names of the recordingArrays */
+
+    /** Names of the ElectricalSeries, one per entry in recordingArrays */
     std::vector<std::string> recordingArraysNames;
 
-    /** Holds channel information and ids */
+    /** AqNWB channels for each recorded spike channel (SpikeEventSeries) */
     std::vector<AQNWB::Types::ChannelVector> spikeRecordingArrays;
-    
-    /** Holds names of the spikeRecordingArrays */
-    std::vector<std::string> spikeRecordingArraysNames; 
 
-    /** Holds the indexes of the ElectricalSeries containers added to recordingContainers */
+    /** Names of the SpikeEventSeries, one per entry in spikeRecordingArrays */
+    std::vector<std::string> spikeRecordingArraysNames;
+
+    /** Recording object indexes of the ElectricalSeries, one per entry in recordingArrays */
     std::vector<AQNWB::Types::SizeType> esContainerIndexes;
 
-    /** Holds the indexes of the ElectricalSeries containers added to recordingContainers */
+    /** Recording object indexes of the SpikeEventSeries, one per entry in spikeRecordingArrays */
     std::vector<AQNWB::Types::SizeType> spikeContainerIndexes;
 
-    /** Holds pointers to all recorded channels within a stream */
-    Array<ContinuousGroup> continuousChannelGroups;
+    /** For each write channel (index among all recorded channels): index into recordingArrays */
+    std::vector<size_t> writeChannelSeriesIndexes;
 
-    /** Holds pointers to all recorded event channels*/
-    Array<const EventChannel*> eventChannels;
+    /** For each write channel: position of the channel within its ElectricalSeries */
+    std::vector<size_t> writeChannelLocalIndexes;
 
-    /** Holds pointers to all recorded spike channels*/
-    Array<const SpikeChannel*> spikeChannels;
+    /** Reusable buffers for converting float samples to int16 */
+    std::vector<float> scaledBuffer;
+    std::vector<int16_t> intBuffer;
 
-    /** Holds pointers to all incoming continuous channels (used for electrode table)*/
-    Array<const ContinuousChannel*> continuousChannels;
+    /** Set after the first failed data write so that errors are only logged once per file */
+    bool writeErrorLogged = false;
 
-    // /** The identifier for the current file (can be set externally) */
+    /** The identifier for the current file (can be set externally) */
     String identifierText;
-    };
-}
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NWBRecordEngine);
+};
+} // namespace NWBRecording
 
 #endif

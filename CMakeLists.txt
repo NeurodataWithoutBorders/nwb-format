@@ -34,7 +34,10 @@ set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS
 
 set(SOURCE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 file(GLOB_RECURSE SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/*.cpp" "${SOURCE_PATH}/*.h" "${SOURCE_PATH}/*.hpp")
-list(FILTER SRC_FILES EXCLUDE REGEX ".*/aqnwb/(tests|demo)/.*")
+# Only compile the AqNWB library sources (skip its tests, demos, docs and resources)
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/aqnwb/.*")
+file(GLOB_RECURSE AQNWB_SRC_FILES LIST_DIRECTORIES false "${SOURCE_PATH}/aqnwb/src/*.cpp" "${SOURCE_PATH}/aqnwb/src/*.hpp")
+list(APPEND SRC_FILES ${AQNWB_SRC_FILES})
 set(GUI_COMMONLIB_DIR ${GUI_BASE_DIR}/installed_libs)
 
 include_directories(${SOURCE_PATH}/aqnwb/src)
@@ -51,7 +54,6 @@ endif()
 
 target_compile_features(${PLUGIN_NAME} PUBLIC cxx_auto_type cxx_generalized_initializers cxx_std_17)
 target_include_directories(${PLUGIN_NAME} PUBLIC ${GUI_BASE_DIR}/JuceLibraryCode ${GUI_BASE_DIR}/JuceLibraryCode/modules ${GUI_BASE_DIR}/Plugins/Headers ${GUI_COMMONLIB_DIR}/include)
-target_compile_definitions(${PLUGIN_NAME} PUBLIC BOOST_NO_CXX98_FUNCTION_BASE)
 
 set(GUI_BIN_DIR ${GUI_BASE_DIR}/Build/${CONFIGURATION_FOLDER})
 
@@ -121,10 +123,8 @@ endif()
 
 include_directories(${HDF5_INCLUDE_DIRS})
 
-find_package(Boost REQUIRED)
-
-target_link_libraries(${PLUGIN_NAME} ${HDF5_LIBRARIES} ${HDF5_CXX_LIBRARIES} ${Boost_LIBRARIES})
-target_include_directories(${PLUGIN_NAME} PRIVATE ${HDF5_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+target_link_libraries(${PLUGIN_NAME} ${HDF5_LIBRARIES} ${HDF5_CXX_LIBRARIES})
+target_include_directories(${PLUGIN_NAME} PRIVATE ${HDF5_INCLUDE_DIRS})
 
 #target_include_directories(${PLUGIN_NAME} PUBLIC ../OpenEphysHDF5Lib/Source)
 

@@ -20,43 +20,51 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
  */
- 
-#include <filesystem>
+
 #include <string>
 
 #include "NWBRecording.h"
-#include "Channel.hpp"
 #include "Utils.hpp"
+#include "io/nwbio_utils.hpp"
 
-#include "../../plugin-GUI/Source/Processors/RecordNode/RecordNode.h"
+#include "../../Source/Processors/RecordNode/RecordNode.h"
 
-#define MAX_BUFFER_SIZE 40960
- 
- using namespace NWBRecording;
- 
- NWBRecordEngine::NWBRecordEngine()
- {
- }
+using namespace NWBRecording;
+using AQNWB::Types::SizeType;
+using AQNWB::Types::Status;
 
- NWBRecordEngine::~NWBRecordEngine()
- {    
-   if (this->nwbfile != nullptr)
-   {
-       
-       this->continuousChannels.clear();
-       this->continuousChannelGroups.clear();
-       this->spikeChannels.clear();
-       this->eventChannels.clear();
-       
-       this->recordingArrays.clear();
-       this->spikeRecordingArrays.clear();
-       this->esContainerIndexes.clear();
-       this->spikeContainerIndexes.clear();
+namespace
+{
+/** Name of the ElectricalSeries / ElectrodeGroup for the stream of a continuous channel */
+std::string getStreamName (const ContinuousChannel* channel)
+{
+    return channel->getSourceNodeName().toStdString() + "-"
+           + std::to_string (channel->getSourceNodeId())
+           + "." + channel->getStreamName().toStdString();
+}
 
-       this->nwbfile->finalize();
-       this->nwbfile.reset();
-   }
- }
+/** Scale float samples (in units of bitVolts) and convert them to int16 */
+void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vector<float>& scaled, std::vector<int16_t>& out)
+{
+    if (scaled.size() < (size_t) numSamples)
+    {
+        scaled.resize (numSamples);
+        out.resize (numSamples);
+    }
+
+    FloatVectorOperations::copyWithMultiply (scaled.data(), data, 1.0f / (float (0x7fff) * bitVolts), numSamples);
+    AudioDataConverters::convertFloatToInt16LE (scaled.data(), out.data(), numSamples);
+}
+} // namespace
+
+NWBRecordEngine::NWBRecordEngine()
+{
+}
+
+NWBRecordEngine::~NWBRecordEngine()
+{
+    closeFile();
+}
 
 RecordEngineManager* NWBRecordEngine::getEngineManager()
 {
@@ -68,234 +76,257 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
     return man;
 }
 
-
- void NWBRecordEngine::openFiles(File rootFolder, int experimentNumber, int recordingNumber)
- {  
-     if (recordingNumber == 0) // new file needed
-     {  
-        // clear any existing data and nwbfile
-        this->continuousChannels.clear();
-        this->continuousChannelGroups.clear();
-        this->spikeChannels.clear();
-        this->eventChannels.clear();
-        
-        this->recordingArrays.clear();
-        this->spikeRecordingArrays.clear();
-        this->esContainerIndexes.clear();
-        this->spikeContainerIndexes.clear();
-        
-        if (this->nwbfile != nullptr)
-        {
-            this->nwbfile->finalize();
-            this->nwbfile.reset();
-        }
-
-        // create the io object
-        char separator = std::filesystem::path::preferred_separator;
-        std::string separatorStr(1, separator); // Convert char to std::string
-        std::string filename = rootFolder.getFullPathName().toStdString() + separatorStr + 
-        "experiment_aqnwb" + std::to_string(experimentNumber) + ".nwb";
-
-        this->io = AQNWB::createIO("HDF5", filename);
-        this->io->open();
-
-        // create recording array mapping for channel information
-        NWBRecordEngine::createRecordingArrays();
-
-        // create the nwbfile
-        std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
-        this->nwbfile = std::make_unique<AQNWB::NWB::NWBFile>(this->io);
-        Status initStatus = this->nwbfile->initialize(AQNWB::generateUuid(), "Recording with the Open Ephys GUI", dataCollection);
-        AQNWB::checkStatus(initStatus, "NWBFile initialization");
-        // TODO - have option to initialize cache size based on # of channels
-
-        // create the electrodes table
-        Status elecTableStatus = this->nwbfile->createElectrodesTable(this->recordingArrays);
-        AQNWB::checkStatus(elecTableStatus, "Electrodes table initialization");
-
-        // create recording containers
-        this->recordingContainers = std::make_unique<AQNWB::NWB::RecordingContainers>();
-        Status elecSeriesStatus = this->nwbfile->createElectricalSeries(
-            this->recordingArrays, this->recordingArraysNames, AQNWB::IO::BaseDataType::I16, this->recordingContainers.get(), this->esContainerIndexes);
-        AQNWB::checkStatus(elecSeriesStatus, "ElectricalSeries creation");
-        // TODO add io_settings to set chunk size for different data types
-
-        Status spikeEventSeriesStatus = this->nwbfile->createSpikeEventSeries(
-            this->spikeRecordingArrays, this->spikeRecordingArraysNames, AQNWB::IO::BaseDataType::I16, this->recordingContainers.get(), this->spikeContainerIndexes);       
-        AQNWB::checkStatus(spikeEventSeriesStatus, "SpikeEventSeries creation");
-
-        // start recording
-        Status startRecordingStatus = this->io->startRecording();
-        AQNWB::checkStatus(startRecordingStatus, "Start recording");
+bool NWBRecordEngine::checkStatus (Status status, const String& operation)
+{
+    if (status != Status::Success)
+    {
+        LOGE ("NWB2: ", operation, " failed");
+        return false;
     }
- }
-
-
-
- void NWBRecordEngine::closeFiles()
- {
-    this->io->stopRecording();
-    this->nwbfile->finalize();
- }
-
-void NWBRecordEngine::writeContinuousData(int writeChannel,
-                                          int realChannel,
-                                          const float* dataBuffer,
-                                          const double* timestampBuffer,
-                                          int size)
-{   
-    // get channel info - add this to RecordingArray or ChannelVector when we make it a class
-    AQNWB::Channel* channel = nullptr;
-    AQNWB::Types::SizeType datasetIndex = 0;
-    for (auto& channelVector : this->recordingArrays) {
-        for (auto& ch : channelVector) {
-            if (ch.getGlobalIndex() == realChannel) {
-                channel = &ch;
-                break;
-            }
-        }
-    }
-
-    std::unique_ptr<int16_t[]> intBuffer = AQNWB::transformToInt16(static_cast<SizeType>(size), channel->getBitVolts(), dataBuffer);
-    this->recordingContainers->writeElectricalSeriesData(this->esContainerIndexes[channel->getGroupIndex()],
-                                            *channel,
-                                            static_cast<SizeType>(size),
-                                            intBuffer.get(),
-                                            timestampBuffer);
-
-    // TODO - save sample numbers as well for offline syncing
+    return true;
 }
- 
-void NWBRecordEngine::writeEvent(int eventIndex, const MidiMessage& event) 
-{   
-    // TODO - replace with AQNWB
-	// const EventChannel* channel = getEventChannel(eventIndex);
-	// EventPtr eventStruct = Event::deserialize(event, channel);
 
-	// nwb->writeEvent(eventIndex, channel, eventStruct);
+void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int recordingNumber)
+{
+    // Recordings within the same experiment are appended to the datasets of the open file
+    if (recordingNumber > 0 && io != nullptr && io->isOpen())
+        return;
+
+    closeFile();
+    createRecordingArrays();
+
+    // New file for each experiment, e.g. experiment1.nwb, experiment2.nwb, etc.
+    String filename = rootFolder.getFullPathName() + rootFolder.getSeparatorString()
+                      + "experiment" + String (experimentNumber) + ".nwb";
+
+    io = AQNWB::createIO ("HDF5", filename.toStdString());
+    if (! checkStatus (io->open (AQNWB::IO::FileMode::Overwrite), "Opening " + filename))
+    {
+        io.reset();
+        return;
+    }
+
+    nwbfile = AQNWB::NWB::NWBFile::create (io);
+    if (nwbfile == nullptr)
+    {
+        LOGE ("NWB2: Creating the NWBFile object failed");
+        closeFile();
+        return;
+    }
+
+    String identifier = identifierText.isNotEmpty() ? identifierText : String (AQNWB::generateUuid());
+    std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
+
+    bool success = checkStatus (nwbfile->initialize (identifier.toStdString(), "Recording with the Open Ephys GUI", dataCollection),
+                                "NWBFile initialization");
+
+    if (success && nwbfile->createElectrodesTable (electrodeArrays) == nullptr)
+    {
+        LOGE ("NWB2: Electrodes table creation failed");
+        success = false;
+    }
+
+    success = success
+              && checkStatus (nwbfile->createElectricalSeries (recordingArrays, recordingArraysNames, AQNWB::IO::BaseDataType::I16, esContainerIndexes),
+                              "ElectricalSeries creation")
+              && checkStatus (nwbfile->createSpikeEventSeries (spikeRecordingArrays, spikeRecordingArraysNames, AQNWB::IO::BaseDataType::I16, spikeContainerIndexes),
+                              "SpikeEventSeries creation")
+              && checkStatus (io->startRecording(), "Start recording");
+
+    if (! success)
+        closeFile();
+}
+
+void NWBRecordEngine::closeFiles()
+{
+    // Called each time recording stops. Flush so that all data written so far is complete on disk.
+    // The file stays open so that further recordings of the same experiment are appended to it;
+    // it is finalized and closed when the next experiment starts or the engine is destroyed.
+    if (io != nullptr && io->isOpen())
+        checkStatus (io->flush(), "Flushing the NWB file");
+}
+
+void NWBRecordEngine::closeFile()
+{
+    if (io != nullptr && io->isOpen())
+    {
+        // Finalizes all recording objects. In SWMR mode this also closes the file.
+        checkStatus (io->stopRecording(), "Stop recording");
+
+        if (io->isOpen())
+            checkStatus (io->close(), "Closing the NWB file");
+    }
+
+    nwbfile.reset();
+    io.reset();
+    writeErrorLogged = false;
+}
+
+void NWBRecordEngine::writeContinuousData (int writeChannel,
+                                           int realChannel,
+                                           const float* dataBuffer,
+                                           const double* timestampBuffer,
+                                           int size)
+{
+    if (io == nullptr || writeChannel < 0 || (size_t) writeChannel >= writeChannelSeriesIndexes.size())
+        return;
+
+    const size_t seriesIndex = writeChannelSeriesIndexes[writeChannel];
+    const AQNWB::Channel& channel = recordingArrays[seriesIndex][writeChannelLocalIndexes[writeChannel]];
+
+    convertToInt16 (dataBuffer, size, channel.getBitVolts(), scaledBuffer, intBuffer);
+
+    // Timestamps are only written together with the first channel of each ElectricalSeries
+    Status status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
+                                                          esContainerIndexes[seriesIndex],
+                                                          channel,
+                                                          static_cast<SizeType> (size),
+                                                          intBuffer.data(),
+                                                          timestampBuffer);
+
+    if (status != Status::Success && ! writeErrorLogged)
+    {
+        LOGE ("NWB2: Writing continuous data for ", recordingArraysNames[seriesIndex], " failed");
+        writeErrorLogged = true;
+    }
+
+    // TODO - save sample numbers (sync/sample_numbers)
+}
+
+void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
+{
+    // TODO - write TTL and text events to EventsTables
 }
 
 void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 timestamp, float sourceSampleRate, String text)
 {
-    // TODO - replacew with AQNWB
-	// nwb->writeTimestampSyncText(streamId, timestamp, sourceSampleRate, text);
+    // TODO - write sync messages to an EventsTable
 }
 
 void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
 {
-    // extract info from spike channel
-	const SpikeChannel* spikeChannel = getSpikeChannel(electrodeIndex);
-    SizeType numSamplesPerChannel = static_cast<SizeType>(spikeChannel->getTotalSamples());
-    SizeType numChannels = static_cast<SizeType>(spikeChannel->getNumChannels());
-    SizeType numSamples = numSamplesPerChannel * numChannels;
-    
-    // extract info from spike object
-    double timestamps = spike->getTimestampInSeconds();
-    std::unique_ptr<int16_t[]> intData = AQNWB::transformToInt16(static_cast<SizeType>(numSamples), 
-                                                                 spikeChannel->getSourceChannels()[0]->getBitVolts(),
-                                                                 spike->getDataPointer());
+    if (io == nullptr || electrodeIndex < 0 || (size_t) electrodeIndex >= spikeContainerIndexes.size())
+        return;
 
-    // write spike data
-    this->recordingContainers->writeSpikeEventData(this->spikeContainerIndexes[electrodeIndex],
-                                                   numSamplesPerChannel,
-                                                   numChannels,
-                                                   intData.get(),
-                                                   &timestamps);
+    const SpikeChannel* spikeChannel = getSpikeChannel (electrodeIndex);
+    const SizeType numSamplesPerChannel = static_cast<SizeType> (spikeChannel->getTotalSamples());
+    const SizeType numChannels = static_cast<SizeType> (spikeChannel->getNumChannels());
 
-    // TODO - add writeEventMetadata functionalities
+    convertToInt16 (spike->getDataPointer(), static_cast<int> (numSamplesPerChannel * numChannels),
+                    spikeChannel->getChannelBitVolts (0), scaledBuffer, intBuffer);
+
+    double timestamp = spike->getTimestampInSeconds();
+
+    Status status = AQNWB::IO::writeSpikeEventData (io->getRecordingObjects(),
+                                                    spikeContainerIndexes[electrodeIndex],
+                                                    numSamplesPerChannel,
+                                                    numChannels,
+                                                    intBuffer.data(),
+                                                    &timestamp);
+
+    if (status != Status::Success && ! writeErrorLogged)
+    {
+        LOGE ("NWB2: Writing spike data for ", spikeRecordingArraysNames[electrodeIndex], " failed");
+        writeErrorLogged = true;
+    }
+
+    // TODO - save sample numbers and spike metadata
 }
 
-void NWBRecordEngine::setParameter(EngineParameter& parameter)
+void NWBRecordEngine::setParameter (EngineParameter& parameter)
 {
     strParameter (0, identifierText);
 }
 
 void NWBRecordEngine::createRecordingArrays()
 {
-    // get pointers to all continuous channels for electrode table
+    electrodeArrays.clear();
+    recordingArrays.clear();
+    recordingArraysNames.clear();
+    spikeRecordingArrays.clear();
+    spikeRecordingArraysNames.clear();
+    esContainerIndexes.clear();
+    spikeContainerIndexes.clear();
+    writeChannelSeriesIndexes.clear();
+    writeChannelLocalIndexes.clear();
+
+    // Electrodes table: all continuous channels entering the Record Node (not only the recorded ones),
+    // grouped by stream. Rows are ordered by global channel index, so the row index of each electrode
+    // equals the global index referenced by the ElectricalSeries/SpikeEventSeries electrodes regions.
+    std::vector<uint16> electrodeStreamIds;
     for (int i = 0; i < recordNode->getNumOutputs(); i++)
     {
-        const ContinuousChannel* channelInfo = getContinuousChannel(i); // channel info object
-        this->continuousChannels.add(channelInfo);
+        const ContinuousChannel* channelInfo = getContinuousChannel (i);
+
+        if (electrodeStreamIds.empty() || channelInfo->getStreamId() != electrodeStreamIds.back())
+        {
+            electrodeStreamIds.push_back (channelInfo->getStreamId());
+            electrodeArrays.emplace_back();
+        }
+
+        auto& group = electrodeArrays.back();
+        group.push_back (AQNWB::Channel (channelInfo->getName().toStdString(),
+                                         getStreamName (channelInfo),
+                                         electrodeArrays.size() - 1,
+                                         group.size(),
+                                         static_cast<SizeType> (i),
+                                         1e6f,
+                                         channelInfo->getSampleRate(),
+                                         channelInfo->getBitVolts()));
     }
 
-    // add continuous channels
-    int streamIndex = -1;
+    // ElectricalSeries: one per stream with the recorded channels of that stream. The local index of
+    // each channel is its position (column) within the ElectricalSeries.
     uint16 lastStreamId = 0;
     for (int ch = 0; ch < getNumRecordedContinuousChannels(); ch++)
     {
-        int globalIndex = getGlobalIndex(ch); // the global channel index (across all channels entering the Record Node)
-        int localIndex = getLocalIndex(ch);   // the local channel index (within a stream)
+        const int globalIndex = getGlobalIndex (ch); // index across all channels entering the Record Node
+        const ContinuousChannel* channelInfo = getContinuousChannel (globalIndex);
 
-        const ContinuousChannel* channelInfo = getContinuousChannel(globalIndex); // channel info object
-        if (channelInfo->getStreamId() != lastStreamId)
+        if (recordingArrays.empty() || channelInfo->getStreamId() != lastStreamId)
         {
-            streamIndex++;
-            ContinuousGroup newGroup;
-            this->continuousChannelGroups.add(newGroup);
+            recordingArrays.emplace_back();
+            recordingArraysNames.push_back (getStreamName (channelInfo));
+            lastStreamId = channelInfo->getStreamId();
         }
 
-        this->continuousChannelGroups.getReference(streamIndex).add(channelInfo);
-        lastStreamId = channelInfo->getStreamId();        
+        auto& group = recordingArrays.back();
+        writeChannelSeriesIndexes.push_back (recordingArrays.size() - 1);
+        writeChannelLocalIndexes.push_back (group.size());
+
+        group.push_back (AQNWB::Channel (channelInfo->getName().toStdString(),
+                                         recordingArraysNames.back(),
+                                         recordingArrays.size() - 1,
+                                         group.size(),
+                                         static_cast<SizeType> (globalIndex),
+                                         1e6f,
+                                         channelInfo->getSampleRate(),
+                                         channelInfo->getBitVolts()));
     }
 
-    // add spike channels
-    for (int i = 0; i < getNumRecordedSpikeChannels(); i++) {
-        spikeChannels.add(getSpikeChannel(i));
-    }
-
-    // create recording arrays for continuous groups in nwb file
-    for (int streamIndex = 0; streamIndex < this->continuousChannelGroups.size(); streamIndex++)
+    // SpikeEventSeries: one per spike channel (electrode)
+    for (int i = 0; i < getNumRecordedSpikeChannels(); i++)
     {
-        std::vector<AQNWB::Channel> channelVector;
-
-        for (auto& channelInfo : this->continuousChannelGroups[streamIndex]) 
-        {
-            std::string name = channelInfo->getName().toStdString();
-            std::string groupName = channelInfo->getSourceNodeName().toStdString() + "-"
-            + std::to_string(channelInfo->getSourceNodeId())
-            + "." + channelInfo->getStreamName().toStdString();            
-
-            channelVector.push_back(AQNWB::Channel(name, 
-                                                   groupName,
-                                                   streamIndex, 
-                                                   channelInfo->getLocalIndex(),
-                                                   channelInfo->getGlobalIndex(),
-                                                   1e6,
-                                                   channelInfo->getSampleRate(), 
-                                                   channelInfo->getBitVolts()));
-        }
-        this->recordingArrays.push_back(channelVector);
-        this->recordingArraysNames.push_back(channelVector[0].getGroupName());
-    }
-
-    // create recording arrays for spike channels in nwb file
-    for (int i = 0; i < this->spikeChannels.size(); i++)
-    {
-        std::vector<AQNWB::Channel> channelVector;
-
-        const SpikeChannel* spikeChannel = this->spikeChannels[i];
+        const SpikeChannel* spikeChannel = getSpikeChannel (i);
         std::string sourceName = spikeChannel->getSourceNodeName().toStdString() + "-"
-        + std::to_string(spikeChannel->getSourceNodeId())
-        + "." + spikeChannel->getStreamName().toStdString() + '.' + spikeChannel->getName().toStdString();
+                                 + std::to_string (spikeChannel->getSourceNodeId())
+                                 + "." + spikeChannel->getStreamName().toStdString()
+                                 + "." + spikeChannel->getName().toStdString();
 
+        AQNWB::Types::ChannelVector channelVector;
         for (int ch = 0; ch < spikeChannel->getNumChannels(); ch++)
-        {   
-            const ContinuousChannel* schan = spikeChannel->getSourceChannels()[ch];
-            std::string continuousSourceName = schan->getSourceNodeName().toStdString() + "-"
-            + std::to_string(schan->getSourceNodeId())
-            + "." + schan->getStreamName().toStdString();  
-            AQNWB::Channel channel(schan->getName().toStdString(), 
-                                   continuousSourceName,
-                                   i,
-                                   schan->getLocalIndex(),
-                                   schan->getGlobalIndex(),
-                                   1e6,
-                                   schan->getSampleRate(), 
-                                   schan->getBitVolts());
-            channelVector.push_back(channel);
+        {
+            const ContinuousChannel* sourceChannel = spikeChannel->getSourceChannels()[ch];
+            channelVector.push_back (AQNWB::Channel (sourceChannel->getName().toStdString(),
+                                                     getStreamName (sourceChannel),
+                                                     static_cast<SizeType> (i),
+                                                     static_cast<SizeType> (ch),
+                                                     static_cast<SizeType> (sourceChannel->getGlobalIndex()),
+                                                     1e6f,
+                                                     sourceChannel->getSampleRate(),
+                                                     sourceChannel->getBitVolts()));
         }
-        this->spikeRecordingArrays.push_back(channelVector);
-        this->spikeRecordingArraysNames.push_back(sourceName);
+        spikeRecordingArrays.push_back (channelVector);
+        spikeRecordingArraysNames.push_back (sourceName);
     }
 }
