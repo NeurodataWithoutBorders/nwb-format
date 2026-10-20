@@ -90,7 +90,10 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
 {
     // Recordings within the same experiment are appended to the datasets of the open file
     if (recordingNumber > 0 && io != nullptr && io->isOpen())
+    {
+        startEpoch (recordingNumber);
         return;
+    }
 
     closeFile();
     createRecordingArrays();
@@ -130,11 +133,82 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
               && checkStatus (nwbfile->createElectricalSeries (recordingArrays, recordingArraysNames, AQNWB::IO::BaseDataType::I16, esContainerIndexes),
                               "ElectricalSeries creation")
               && checkStatus (nwbfile->createSpikeEventSeries (spikeRecordingArrays, spikeRecordingArraysNames, AQNWB::IO::BaseDataType::I16, spikeContainerIndexes),
-                              "SpikeEventSeries creation")
-              && checkStatus (io->startRecording(), "Start recording");
+                              "SpikeEventSeries creation");
 
-    if (! success)
+    // Sample numbers and the epochs table must be created before recording starts (SWMR mode)
+    auto recordingObjects = io->getRecordingObjects();
+    for (size_t i = 0; success && i < esContainerIndexes.size(); i++)
+    {
+        auto dataset = createSampleNumbersDataSet (recordingObjects->getRecordingObject (esContainerIndexes[i])->getPath(),
+                                                   8192,
+                                                   "Sample number of each sample since the start of acquisition, counted on the clock of the data stream");
+        success = dataset != nullptr;
+        esSampleNumbers.push_back (dataset);
+        esSampleNumbersWritten.push_back (0);
+    }
+
+    for (size_t i = 0; success && i < spikeContainerIndexes.size(); i++)
+    {
+        auto dataset = createSampleNumbersDataSet (recordingObjects->getRecordingObject (spikeContainerIndexes[i])->getPath(),
+                                                   256,
+                                                   "Sample number of the peak of each spike since the start of acquisition, counted on the clock of the data stream");
+        success = dataset != nullptr;
+        spikeSampleNumbers.push_back (dataset);
+        spikeSampleNumbersWritten.push_back (0);
+    }
+
+    if (success)
+    {
+        epochs = nwbfile->createEpochs (true);
+        if (epochs == nullptr)
+        {
+            LOGE ("NWB2: Epochs table creation failed");
+            success = false;
+        }
+    }
+
+    success = success && checkStatus (io->startRecording(), "Start recording");
+
+    if (success)
+        startEpoch (recordingNumber);
+    else
         closeFile();
+}
+
+std::shared_ptr<AQNWB::IO::BaseRecordingData> NWBRecordEngine::createSampleNumbersDataSet (const std::string& seriesPath,
+                                                                                           SizeType chunkSize,
+                                                                                           const std::string& description)
+{
+    // Sample numbers are stored in the (lab-specific) TimeSeries.sync group defined by the NWB schema
+    const std::string syncPath = seriesPath + "/sync";
+    const std::string path = syncPath + "/sample_numbers";
+
+    try
+    {
+        if (! checkStatus (io->createGroup (syncPath), "Creating " + String (syncPath)))
+            return nullptr;
+
+        std::shared_ptr<AQNWB::IO::BaseRecordingData> dataset =
+            io->createArrayDataSet (AQNWB::IO::ArrayDataSetConfig (AQNWB::IO::BaseDataType::I64, { 0 }, { chunkSize }), path);
+
+        if (dataset == nullptr || ! checkStatus (io->createAttribute (description, path, "description"), "Creating " + String (path) + " description"))
+            return nullptr;
+
+        return dataset;
+    }
+    catch (const std::exception& e)
+    {
+        LOGE ("NWB2: Creating ", path, " failed: ", e.what());
+        return nullptr;
+    }
+}
+
+void NWBRecordEngine::startEpoch (int recordingNumber)
+{
+    currentRecordingNumber = recordingNumber;
+    recordingHasData = false;
+    recordingStartTime = 0.0;
+    recordingStopTime = 0.0;
 }
 
 void NWBRecordEngine::closeFiles()
@@ -142,12 +216,33 @@ void NWBRecordEngine::closeFiles()
     // Called each time recording stops. Flush so that all data written so far is complete on disk.
     // The file stays open so that further recordings of the same experiment are appended to it;
     // it is finalized and closed when the next experiment starts or the engine is destroyed.
-    if (io != nullptr && io->isOpen())
-        checkStatus (io->flush(), "Flushing the NWB file");
+    if (io == nullptr || ! io->isOpen())
+        return;
+
+    // Mark the time range of this recording in the epochs table
+    if (epochs != nullptr && recordingHasData)
+    {
+        AQNWB::Types::RowData row = {
+            { "start_time", static_cast<float> (recordingStartTime) },
+            { "stop_time", static_cast<float> (recordingStopTime) },
+            { "tags", std::vector<std::string> { "recording" + std::to_string (currentRecordingNumber + 1) } }
+        };
+        checkStatus (epochs->addRow (row), "Adding the epoch for recording " + String (currentRecordingNumber + 1));
+        recordingHasData = false;
+    }
+
+    checkStatus (io->flush(), "Flushing the NWB file");
 }
 
 void NWBRecordEngine::closeFile()
 {
+    // Release our dataset handles first so that closing the file is not deferred by open HDF5 objects
+    esSampleNumbers.clear();
+    spikeSampleNumbers.clear();
+    esSampleNumbersWritten.clear();
+    spikeSampleNumbersWritten.clear();
+    epochs.reset();
+
     if (io != nullptr && io->isOpen())
     {
         // Finalizes all recording objects. In SWMR mode this also closes the file.
@@ -184,13 +279,35 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
                                                           intBuffer.data(),
                                                           timestampBuffer);
 
+    /* All channels of a stream share the timestamps and sample numbers, so these are written
+       together with the first channel of each ElectricalSeries */
+    if (writeChannelLocalIndexes[writeChannel] == 0 && size > 0)
+    {
+        if (sampleNumberBuffer.size() < (size_t) size)
+            sampleNumberBuffer.resize (size);
+
+        const int64 firstSampleNumber = getLatestSampleNumber (writeChannel);
+        for (int i = 0; i < size; i++)
+            sampleNumberBuffer[i] = firstSampleNumber + i;
+
+        auto& written = esSampleNumbersWritten[seriesIndex];
+        status = status && esSampleNumbers[seriesIndex]->writeDataBlock ({ static_cast<SizeType> (size) }, { written }, AQNWB::IO::BaseDataType::I64, sampleNumberBuffer.data());
+        written += static_cast<SizeType> (size);
+
+        // The epoch of a recording spans from its first to its last recorded timestamp
+        if (! recordingHasData)
+        {
+            recordingStartTime = timestampBuffer[0];
+            recordingHasData = true;
+        }
+        recordingStopTime = timestampBuffer[size - 1];
+    }
+
     if (status != Status::Success && ! writeErrorLogged)
     {
         LOGE ("NWB2: Writing continuous data for ", recordingArraysNames[seriesIndex], " failed");
         writeErrorLogged = true;
     }
-
-    // TODO - save sample numbers (sync/sample_numbers)
 }
 
 void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
@@ -224,13 +341,18 @@ void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
                                                     intBuffer.data(),
                                                     &timestamp);
 
+    const int64 sampleNumber = spike->getSampleNumber();
+    auto& written = spikeSampleNumbersWritten[electrodeIndex];
+    status = status && spikeSampleNumbers[electrodeIndex]->writeDataBlock ({ 1 }, { written }, AQNWB::IO::BaseDataType::I64, &sampleNumber);
+    written += 1;
+
     if (status != Status::Success && ! writeErrorLogged)
     {
         LOGE ("NWB2: Writing spike data for ", spikeRecordingArraysNames[electrodeIndex], " failed");
         writeErrorLogged = true;
     }
 
-    // TODO - save sample numbers and spike metadata
+    // TODO - save spike metadata
 }
 
 void NWBRecordEngine::setParameter (EngineParameter& parameter)

@@ -29,6 +29,7 @@
 #include "Channel.hpp"
 #include "io/BaseIO.hpp"
 #include "nwb/NWBFile.hpp"
+#include "nwb/epoch/TimeIntervals.hpp"
 
 typedef Array<const ContinuousChannel*> ContinuousGroup;
 
@@ -87,6 +88,14 @@ private:
     /** Finalize and close the current file (if any) and release all recording objects */
     void closeFile();
 
+    /** Create the <series>/sync/sample_numbers dataset for the TimeSeries at seriesPath */
+    std::shared_ptr<AQNWB::IO::BaseRecordingData> createSampleNumbersDataSet (const std::string& seriesPath,
+                                                                              AQNWB::Types::SizeType chunkSize,
+                                                                              const std::string& description);
+
+    /** Start tracking the time range of a new recording (epoch) */
+    void startEpoch (int recordingNumber);
+
     /** Log a failed AqNWB operation. Returns true if the status indicates success. */
     static bool checkStatus (AQNWB::Types::Status status, const String& operation);
 
@@ -123,9 +132,27 @@ private:
     /** For each write channel: position of the channel within its ElectricalSeries */
     std::vector<size_t> writeChannelLocalIndexes;
 
-    /** Reusable buffers for converting float samples to int16 */
+    /** Sample number datasets (<series>/sync/sample_numbers), one per ElectricalSeries / SpikeEventSeries */
+    std::vector<std::shared_ptr<AQNWB::IO::BaseRecordingData>> esSampleNumbers;
+    std::vector<std::shared_ptr<AQNWB::IO::BaseRecordingData>> spikeSampleNumbers;
+
+    /** Number of sample numbers written to each dataset in esSampleNumbers / spikeSampleNumbers */
+    std::vector<AQNWB::Types::SizeType> esSampleNumbersWritten;
+    std::vector<AQNWB::Types::SizeType> spikeSampleNumbersWritten;
+
+    /** Epochs table with one row per recording */
+    std::shared_ptr<AQNWB::NWB::TimeIntervals> epochs;
+
+    /** Recording number and time range (in seconds) of the current recording */
+    int currentRecordingNumber = 0;
+    double recordingStartTime = 0.0;
+    double recordingStopTime = 0.0;
+    bool recordingHasData = false;
+
+    /** Reusable buffers for converting float samples to int16 and for sample numbers */
     std::vector<float> scaledBuffer;
     std::vector<int16_t> intBuffer;
+    std::vector<int64> sampleNumberBuffer;
 
     /** Set after the first failed data write so that errors are only logged once per file */
     bool writeErrorLogged = false;
