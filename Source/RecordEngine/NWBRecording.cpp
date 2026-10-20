@@ -172,6 +172,7 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
     success = success && createEpochsTable() && createEventsTables();
 
     success = success && checkStatus (io->startRecording(), "Start recording");
+    lastFlushTime = Time::getMillisecondCounter();
 
     if (success)
         startEpoch (recordingNumber);
@@ -375,15 +376,32 @@ bool NWBRecordEngine::createEventsTables()
     return syncMessagesTable != nullptr;
 }
 
-void NWBRecordEngine::writeSyncMessages()
+void NWBRecordEngine::writeSyncMessages (bool force)
 {
     if (syncMessagesTable == nullptr)
+    {
+        pendingSyncMessages.clear();
         return;
+    }
 
+    std::vector<SyncMessage> remaining;
     for (const auto& message : pendingSyncMessages)
     {
+        // The 'Software Time' message (stream 0) refers to the start of the recording
+        double timestamp = recordingStartTime;
+        bool known = message.streamId == 0 && recordingHasData;
         auto startTime = streamStartTimes.find (message.streamId);
-        const double timestamp = startTime != streamStartTimes.end() ? startTime->second : recordingStartTime;
+        if (startTime != streamStartTimes.end())
+        {
+            timestamp = startTime->second;
+            known = true;
+        }
+
+        if (! known && ! force)
+        {
+            remaining.push_back (message);
+            continue;
+        }
 
         AQNWB::Types::RowData row = { { "timestamp", timestamp },
                                       { "annotation", message.text },
@@ -391,7 +409,7 @@ void NWBRecordEngine::writeSyncMessages()
                                       { "sample_number", message.sampleNumber } };
         checkStatus (syncMessagesTable->addRow (row), "Writing sync message '" + String (message.text) + "'");
     }
-    pendingSyncMessages.clear();
+    pendingSyncMessages = remaining;
 }
 
 void NWBRecordEngine::closeFiles()
@@ -413,7 +431,7 @@ void NWBRecordEngine::closeFiles()
         checkStatus (epochs->addRow (row), "Adding the epoch for recording " + String (currentRecordingNumber + 1));
     }
 
-    writeSyncMessages();
+    writeSyncMessages (true);
     recordingHasData = false;
 
     checkStatus (io->flush(), "Flushing the NWB file");
@@ -493,13 +511,21 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
         recordingStopTime = timestampBuffer[size - 1];
 
         // first timestamp of each stream in the recording (for the sync messages)
-        streamStartTimes.emplace (recordingStreamIds[seriesIndex], timestampBuffer[0]);
+        if (streamStartTimes.emplace (recordingStreamIds[seriesIndex], timestampBuffer[0]).second && ! pendingSyncMessages.empty())
+            writeSyncMessages (false);
     }
 
     if (status != Status::Success && ! writeErrorLogged)
     {
         LOGE ("NWB2: Writing continuous data for ", recordingArraysNames[seriesIndex], " failed");
         writeErrorLogged = true;
+    }
+    // Flush periodically so that the data written so far is not lost if the GUI crashes
+    const uint32 now = Time::getMillisecondCounter();
+    if (now - lastFlushTime >= flushIntervalMs)
+    {
+        checkStatus (io->flush(), "Flushing the NWB file");
+        lastFlushTime = now;
     }
 }
 
@@ -548,9 +574,12 @@ void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
 
 void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 sampleNumber, float sourceSampleRate, String text)
 {
-    // Written when the recording stops, once the first timestamp of each stream in the recording is known
+    // Written once the first timestamp of the stream in the recording is known
     if (io != nullptr)
+    {
         pendingSyncMessages.push_back ({ static_cast<uint16> (streamId), sampleNumber, text.toStdString() });
+        writeSyncMessages (false);
+    }
 }
 
 void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)

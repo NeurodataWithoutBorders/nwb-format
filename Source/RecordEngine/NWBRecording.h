@@ -113,8 +113,9 @@ private:
                                                                bool annotationColumn,
                                                                const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns);
 
-    /** Write the sync messages of the current recording to the sync_messages table */
-    void writeSyncMessages();
+    /** Write the pending sync messages whose stream start time is known. If force is true, the remaining
+        messages are written with the start time of the recording as timestamp. */
+    void writeSyncMessages (bool force);
 
     /** Log a failed AqNWB operation. Returns true if the status indicates success. */
     static bool checkStatus (AQNWB::Types::Status status, const String& operation);
@@ -216,6 +217,12 @@ private:
 
     /** Set after the first failed data write so that errors are only logged once per file */
     bool writeErrorLogged = false;
+
+    /** Interval for flushing the file during a recording, so that data is not lost if the GUI crashes */
+    static constexpr uint32 flushIntervalMs = 10000;
+
+    /** Time of the last flush (Time::getMillisecondCounter()) */
+    uint32 lastFlushTime = 0;
 
     /** The identifier for the current file (can be set externally) */
     String identifierText;
