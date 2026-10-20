@@ -26,10 +26,13 @@
 
 #include <RecordingLib.h>
 
+#include <map>
+
 #include "Channel.hpp"
 #include "io/BaseIO.hpp"
 #include "nwb/NWBFile.hpp"
 #include "nwb/epoch/TimeIntervals.hpp"
+#include "nwb/event/EventsTable.hpp"
 
 typedef Array<const ContinuousChannel*> ContinuousGroup;
 
@@ -96,6 +99,23 @@ private:
     /** Start tracking the time range of a new recording (epoch) */
     void startEpoch (int recordingNumber);
 
+    /** Create the epochs table with float64 start and stop times */
+    bool createEpochsTable();
+
+    /** Create one EventsTable per recorded event channel and the sync messages table */
+    bool createEventsTables();
+
+    /** Create an EventsTable with a float64 timestamp column, the optional annotation column, and custom columns */
+    std::shared_ptr<AQNWB::NWB::EventsTable> createEventsTable (const std::string& name,
+                                                               const std::string& description,
+                                                               const std::string& sourceDescription,
+                                                               float timestampResolution,
+                                                               bool annotationColumn,
+                                                               const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns);
+
+    /** Write the sync messages of the current recording to the sync_messages table */
+    void writeSyncMessages();
+
     /** Log a failed AqNWB operation. Returns true if the status indicates success. */
     static bool checkStatus (AQNWB::Types::Status status, const String& operation);
 
@@ -142,6 +162,46 @@ private:
 
     /** Epochs table with one row per recording */
     std::shared_ptr<AQNWB::NWB::TimeIntervals> epochs;
+
+    /** Type of data stored in the EventsTable of an event channel */
+    enum class EventTableType
+    {
+        TTL,
+        Text,
+        Unsupported
+    };
+
+    /** EventsTable of a recorded event channel */
+    struct EventTable
+    {
+        EventTableType type = EventTableType::Unsupported;
+        std::string name;
+        std::shared_ptr<AQNWB::NWB::EventsTable> table;
+    };
+
+    /** One EventTable per recorded event channel (indexed by the event channel index) */
+    std::vector<EventTable> eventTables;
+
+    /** EventsTable with the sync messages (start sample number of each stream for each recording) */
+    std::shared_ptr<AQNWB::NWB::EventsTable> syncMessagesTable;
+
+    /** Sync message received for the current recording, written when the recording stops */
+    struct SyncMessage
+    {
+        uint16 streamId;
+        int64 sampleNumber;
+        std::string text;
+    };
+    std::vector<SyncMessage> pendingSyncMessages;
+
+    /** Stream id of each ElectricalSeries, one per entry in recordingArrays */
+    std::vector<uint16> recordingStreamIds;
+
+    /** First recorded timestamp of each stream in the current recording */
+    std::map<uint16, double> streamStartTimes;
+
+    /** Set after the first failed or unsupported event write so that errors are only logged once per file */
+    bool eventErrorLogged = false;
 
     /** Recording number and time range (in seconds) of the current recording */
     int currentRecordingNumber = 0;

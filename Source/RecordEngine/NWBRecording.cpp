@@ -21,6 +21,7 @@
 
  */
 
+#include <set>
 #include <string>
 
 #include "NWBRecording.h"
@@ -131,9 +132,20 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
 
     success = success
               && checkStatus (nwbfile->createElectricalSeries (recordingArrays, recordingArraysNames, AQNWB::IO::BaseDataType::I16, esContainerIndexes),
-                              "ElectricalSeries creation")
-              && checkStatus (nwbfile->createSpikeEventSeries (spikeRecordingArrays, spikeRecordingArraysNames, AQNWB::IO::BaseDataType::I16, spikeContainerIndexes),
-                              "SpikeEventSeries creation");
+                              "ElectricalSeries creation");
+
+    // One SpikeEventSeries per spike channel, since the number of samples per spike may differ. All channels
+    // of a spike are scaled with the same factor (see writeSpike), which is stored in data.conversion
+    for (size_t i = 0; success && i < spikeRecordingArrays.size(); i++)
+    {
+        success = checkStatus (nwbfile->createSpikeEventSeries ({ spikeRecordingArrays[i] },
+                                                                { spikeRecordingArraysNames[i] },
+                                                                AQNWB::IO::BaseDataType::I16,
+                                                                spikeContainerIndexes,
+                                                                static_cast<SizeType> (getSpikeChannel (static_cast<int> (i))->getTotalSamples()),
+                                                                false),
+                               "SpikeEventSeries creation for " + String (spikeRecordingArraysNames[i]));
+    }
 
     // Sample numbers and the epochs table must be created before recording starts (SWMR mode)
     auto recordingObjects = io->getRecordingObjects();
@@ -157,15 +169,7 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
         spikeSampleNumbersWritten.push_back (0);
     }
 
-    if (success)
-    {
-        epochs = nwbfile->createEpochs (true);
-        if (epochs == nullptr)
-        {
-            LOGE ("NWB2: Epochs table creation failed");
-            success = false;
-        }
-    }
+    success = success && createEpochsTable() && createEventsTables();
 
     success = success && checkStatus (io->startRecording(), "Start recording");
 
@@ -209,6 +213,185 @@ void NWBRecordEngine::startEpoch (int recordingNumber)
     recordingHasData = false;
     recordingStartTime = 0.0;
     recordingStopTime = 0.0;
+    streamStartTimes.clear();
+}
+
+bool NWBRecordEngine::createEpochsTable()
+{
+    // Use float64 start and stop times, since float32 is not precise enough for long recordings
+    const std::string path = AQNWB::NWB::NWBFile::INTERVALS_PATH + "/epochs";
+    auto specs = AQNWB::NWB::TimeIntervals::createDefaultDataSpecs (path, 100, true);
+    for (auto& spec : specs)
+    {
+        if (spec->name == "start_time" || spec->name == "stop_time")
+        {
+            spec = AQNWB::NWB::VectorData::createDataSpec (
+                spec->name,
+                AQNWB::IO::ArrayDataSetConfig (AQNWB::IO::BaseDataType::F64, { 0 }, { 100 }),
+                spec->name == "start_time" ? "Start time of the recording, in seconds."
+                                           : "Stop time of the recording, in seconds.");
+        }
+    }
+
+    try
+    {
+        epochs = nwbfile->createTimeIntervals ("epochs",
+                                               "Recordings (start and stop of recording within an acquisition). "
+                                               "Data of all recordings of an experiment are appended to the same datasets.",
+                                               specs);
+    }
+    catch (const std::exception& e)
+    {
+        LOGE ("NWB2: Epochs table creation failed: ", e.what());
+        epochs = nullptr;
+    }
+
+    if (epochs == nullptr)
+        LOGE ("NWB2: Epochs table creation failed");
+    return epochs != nullptr;
+}
+
+std::shared_ptr<AQNWB::NWB::EventsTable> NWBRecordEngine::createEventsTable (const std::string& name,
+                                                                            const std::string& description,
+                                                                            const std::string& sourceDescription,
+                                                                            float timestampResolution,
+                                                                            bool annotationColumn,
+                                                                            const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns)
+{
+    // Use a float64 timestamp column, since float32 is not precise enough for long recordings
+    auto specs = AQNWB::NWB::EventsTable::createDefaultDataSpecs (timestampResolution, false, std::nullopt, annotationColumn, 100);
+    for (auto& spec : specs)
+    {
+        if (spec->name == "timestamp")
+        {
+            spec = std::make_shared<AQNWB::NWB::TimestampVectorData::DataSpec> (
+                "timestamp",
+                AQNWB::IO::ArrayDataSetConfig (AQNWB::IO::BaseDataType::F64, { 0 }, { 100 }),
+                "Time of each event, in seconds, from the session start time.",
+                timestampResolution);
+        }
+    }
+    specs.insert (specs.end(), customColumns.begin(), customColumns.end());
+
+    try
+    {
+        auto table = nwbfile->createEventsTable (name, description, sourceDescription, specs);
+        if (table == nullptr)
+            LOGE ("NWB2: Creating EventsTable ", name, " failed");
+        return table;
+    }
+    catch (const std::exception& e)
+    {
+        LOGE ("NWB2: Creating EventsTable ", name, " failed: ", e.what());
+        return nullptr;
+    }
+}
+
+bool NWBRecordEngine::createEventsTables()
+{
+    using AQNWB::IO::ArrayDataSetConfig;
+    using AQNWB::IO::BaseDataType;
+    using AQNWB::NWB::VectorData;
+
+    auto column = [] (const std::string& name, const BaseDataType& type, const std::string& description)
+    { return VectorData::createDataSpec (name, ArrayDataSetConfig (type, { 0 }, { 100 }), description); };
+
+    const std::string sampleNumberDescription =
+        "Sample number of each event since the start of acquisition, counted on the clock of the data stream";
+
+    std::set<std::string> usedNames;
+    eventTables.clear();
+
+    for (int i = 0; i < getNumRecordedEventChannels(); i++)
+    {
+        const EventChannel* channel = getEventChannel (i);
+        EventTable eventTable;
+
+        const bool isMessageCenter = channel->getSourceNodeName() == "Message Center";
+        std::string name = isMessageCenter ? std::string ("messages")
+                                           : (channel->getSourceNodeName() + "-" + String (channel->getSourceNodeId()) + "."
+                                              + channel->getStreamName() + "." + channel->getName())
+                                                 .replaceCharacter ('/', '_')
+                                                 .toStdString();
+        // make sure the table names are unique
+        const std::string baseName = name;
+        for (int n = 2; usedNames.count (name) > 0; n++)
+            name = baseName + "_" + std::to_string (n);
+        usedNames.insert (name);
+        eventTable.name = name;
+
+        const float resolution = channel->getSampleRate() > 0 ? 1.0f / channel->getSampleRate() : -1.0f;
+        const std::string description = channel->getDescription().toStdString();
+
+        if (channel->getType() == EventChannel::TTL)
+        {
+            eventTable.type = EventTableType::TTL;
+            eventTable.table = createEventsTable (
+                name,
+                description.empty() ? "TTL events" : description,
+                "Acquisition system: TTL events from " + channel->getSourceNodeName().toStdString(),
+                resolution,
+                false,
+                { column ("line", BaseDataType::U8, "TTL line (0-based) that changed state"),
+                  column ("state", BaseDataType::U8, "New state of the TTL line (1 = on, 0 = off)"),
+                  column ("full_word", BaseDataType::U64, "State of the first 64 TTL lines when the event occurred"),
+                  column ("sample_number", BaseDataType::I64, sampleNumberDescription) });
+        }
+        else if (channel->getType() == EventChannel::TEXT)
+        {
+            eventTable.type = EventTableType::Text;
+            eventTable.table = createEventsTable (
+                name,
+                isMessageCenter ? "Text messages generated during the experiment (e.g., via the Message Center)"
+                                : (description.empty() ? "Text events" : description),
+                isMessageCenter ? "Message Center" : channel->getSourceNodeName().toStdString(),
+                resolution,
+                true,
+                { column ("sample_number", BaseDataType::I64, sampleNumberDescription) });
+        }
+        else
+        {
+            LOGD ("NWB2: Event channel ", channel->getName(), " has an unsupported event type and will not be recorded");
+            eventTables.push_back (eventTable);
+            continue;
+        }
+
+        if (eventTable.table == nullptr)
+            return false;
+        eventTables.push_back (eventTable);
+    }
+
+    syncMessagesTable = createEventsTable (
+        "sync_messages",
+        "Start of each recording for each data stream. The timestamp is the first timestamp recorded for the "
+        "stream in the recording. For the 'Software Time' message, the sample_number is the system time in "
+        "milliseconds since midnight Jan 1st 1970 UTC and the timestamp is the start time of the recording.",
+        "Open Ephys Record Node",
+        -1.0f,
+        true,
+        { column ("stream_id", BaseDataType::U16, "Open Ephys id of the data stream (0 for the 'Software Time' message)"),
+          column ("sample_number", BaseDataType::I64, "First sample number of the stream in the recording") });
+
+    return syncMessagesTable != nullptr;
+}
+
+void NWBRecordEngine::writeSyncMessages()
+{
+    if (syncMessagesTable == nullptr)
+        return;
+
+    for (const auto& message : pendingSyncMessages)
+    {
+        auto startTime = streamStartTimes.find (message.streamId);
+        const double timestamp = startTime != streamStartTimes.end() ? startTime->second : recordingStartTime;
+
+        AQNWB::Types::RowData row = { { "timestamp", timestamp },
+                                      { "annotation", message.text },
+                                      { "stream_id", message.streamId },
+                                      { "sample_number", message.sampleNumber } };
+        checkStatus (syncMessagesTable->addRow (row), "Writing sync message '" + String (message.text) + "'");
+    }
+    pendingSyncMessages.clear();
 }
 
 void NWBRecordEngine::closeFiles()
@@ -223,13 +406,15 @@ void NWBRecordEngine::closeFiles()
     if (epochs != nullptr && recordingHasData)
     {
         AQNWB::Types::RowData row = {
-            { "start_time", static_cast<float> (recordingStartTime) },
-            { "stop_time", static_cast<float> (recordingStopTime) },
+            { "start_time", recordingStartTime },
+            { "stop_time", recordingStopTime },
             { "tags", std::vector<std::string> { "recording" + std::to_string (currentRecordingNumber + 1) } }
         };
         checkStatus (epochs->addRow (row), "Adding the epoch for recording " + String (currentRecordingNumber + 1));
-        recordingHasData = false;
     }
+
+    writeSyncMessages();
+    recordingHasData = false;
 
     checkStatus (io->flush(), "Flushing the NWB file");
 }
@@ -242,6 +427,10 @@ void NWBRecordEngine::closeFile()
     esSampleNumbersWritten.clear();
     spikeSampleNumbersWritten.clear();
     epochs.reset();
+    eventTables.clear();
+    syncMessagesTable.reset();
+    pendingSyncMessages.clear();
+    streamStartTimes.clear();
 
     if (io != nullptr && io->isOpen())
     {
@@ -255,6 +444,7 @@ void NWBRecordEngine::closeFile()
     nwbfile.reset();
     io.reset();
     writeErrorLogged = false;
+    eventErrorLogged = false;
 }
 
 void NWBRecordEngine::writeContinuousData (int writeChannel,
@@ -301,6 +491,9 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
             recordingHasData = true;
         }
         recordingStopTime = timestampBuffer[size - 1];
+
+        // first timestamp of each stream in the recording (for the sync messages)
+        streamStartTimes.emplace (recordingStreamIds[seriesIndex], timestampBuffer[0]);
     }
 
     if (status != Status::Success && ! writeErrorLogged)
@@ -312,12 +505,52 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
 
 void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
 {
-    // TODO - write TTL and text events to EventsTables
+    if (io == nullptr || eventIndex < 0 || (size_t) eventIndex >= eventTables.size())
+        return;
+
+    const EventTable& eventTable = eventTables[eventIndex];
+    if (eventTable.table == nullptr)
+    {
+        if (! eventErrorLogged)
+        {
+            LOGE ("NWB2: Events of type ", (int) getEventChannel (eventIndex)->getType(), " are not supported and are not recorded");
+            eventErrorLogged = true;
+        }
+        return;
+    }
+
+    const EventChannel* channel = getEventChannel (eventIndex);
+    EventPtr eventStruct = Event::deserialize (event, channel);
+    if (eventStruct == nullptr)
+        return;
+
+    AQNWB::Types::RowData row = { { "timestamp", eventStruct->getTimestampInSeconds() },
+                                  { "sample_number", static_cast<int64_t> (eventStruct->getSampleNumber()) } };
+
+    if (eventTable.type == EventTableType::TTL)
+    {
+        const TTLEvent* ttl = static_cast<const TTLEvent*> (eventStruct.get());
+        row["line"] = static_cast<uint8_t> (ttl->getLine());
+        row["state"] = static_cast<uint8_t> (ttl->getState() ? 1 : 0);
+        row["full_word"] = static_cast<uint64_t> (ttl->getWord());
+    }
+    else
+    {
+        row["annotation"] = static_cast<const TextEvent*> (eventStruct.get())->getText().toStdString();
+    }
+
+    if (eventTable.table->addRow (row) != Status::Success && ! eventErrorLogged)
+    {
+        LOGE ("NWB2: Writing event to ", eventTable.name, " failed");
+        eventErrorLogged = true;
+    }
 }
 
-void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 timestamp, float sourceSampleRate, String text)
+void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 sampleNumber, float sourceSampleRate, String text)
 {
-    // TODO - write sync messages to an EventsTable
+    // Written when the recording stops, once the first timestamp of each stream in the recording is known
+    if (io != nullptr)
+        pendingSyncMessages.push_back ({ static_cast<uint16> (streamId), sampleNumber, text.toStdString() });
 }
 
 void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
@@ -371,6 +604,7 @@ void NWBRecordEngine::createRecordingArrays()
     spikeContainerIndexes.clear();
     writeChannelSeriesIndexes.clear();
     writeChannelLocalIndexes.clear();
+    recordingStreamIds.clear();
 
     // Electrodes table: all continuous channels entering the Record Node (not only the recorded ones),
     // grouped by stream. Rows are ordered by global channel index, so the row index of each electrode
@@ -409,6 +643,7 @@ void NWBRecordEngine::createRecordingArrays()
         {
             recordingArrays.emplace_back();
             recordingArraysNames.push_back (getStreamName (channelInfo));
+            recordingStreamIds.push_back (channelInfo->getStreamId());
             lastStreamId = channelInfo->getStreamId();
         }
 
