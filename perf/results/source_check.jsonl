@@ -1,0 +1,2 @@
+{"engine": "BINARY", "channels": 4608, "recorded_channels": 4, "rate_MBps": 276.5, "status_at_end": "RECORD", "kept_up": true, "record_s": 30.04, "written_s": 30.05, "written_fraction": 1.0, "size_GB": 0.022, "cpu_acquire": 1.123, "cpu_record": 1.793, "repeat": 0}
+{"engine": "BINARY", "channels": 4608, "recorded_channels": 4608, "rate_MBps": 276.5, "status_at_end": "RECORD", "kept_up": false, "record_s": 30.04, "written_s": 13.51, "written_fraction": 0.45, "size_GB": 3.744, "cpu_acquire": 1.426, "cpu_record": 2.164, "repeat": 0}
