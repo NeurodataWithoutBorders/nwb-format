@@ -21,11 +21,13 @@
 
  */
 
+#include <algorithm>
 #include <set>
 #include <string>
 
 #include "NWBRecording.h"
 #include "Utils.hpp"
+#include "io/hdf5/HDF5IO.hpp"
 #include "io/nwbio_utils.hpp"
 
 #include "../../Source/Processors/RecordNode/RecordNode.h"
@@ -104,6 +106,18 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
                       + "experiment" + String (experimentNumber) + ".nwb";
 
     io = AQNWB::createIO ("HDF5", filename.toStdString());
+
+    // The data is written one channel at a time, so the chunk cache of each dataset must hold the
+    // chunks of all channels (the 1 MiB default is too small for high channel counts, e.g., a chunk of
+    // 2048 samples x 384 channels x int16 is 1.5 MiB, causing a read-modify-write of the chunk per channel)
+    size_t maxChannels = 1;
+    for (const auto& group : recordingArrays)
+        maxChannels = std::max (maxChannels, group.size());
+    const SizeType chunkBytes = 2048 * maxChannels * sizeof (int16_t);
+    const SizeType cacheBytes = std::max<SizeType> (1024 * 1024, 4 * chunkBytes);
+    if (auto hdf5io = std::dynamic_pointer_cast<AQNWB::IO::HDF5::HDF5IO> (io))
+        checkStatus (hdf5io->setChunkCache (cacheBytes), "Setting the chunk cache size");
+
     if (! checkStatus (io->open (AQNWB::IO::FileMode::Overwrite), "Opening " + filename))
     {
         io.reset();
