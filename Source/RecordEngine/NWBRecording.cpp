@@ -124,10 +124,18 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
     bool success = checkStatus (nwbfile->initialize (identifier.toStdString(), "Recording with the Open Ephys GUI", dataCollection),
                                 "NWBFile initialization");
 
-    if (success && nwbfile->createElectrodesTable (electrodeArrays) == nullptr)
+    if (success)
     {
-        LOGE ("NWB2: Electrodes table creation failed");
-        success = false;
+        auto electrodesTable = nwbfile->createElectrodesTable (electrodeArrays);
+        if (electrodesTable == nullptr)
+        {
+            LOGE ("NWB2: Electrodes table creation failed");
+            success = false;
+        }
+        else
+        {
+            success = addChannelTypeColumn (electrodesTable);
+        }
     }
 
     success = success
@@ -205,6 +213,31 @@ std::shared_ptr<AQNWB::IO::BaseRecordingData> NWBRecordEngine::createSampleNumbe
     {
         LOGE ("NWB2: Creating ", path, " failed: ", e.what());
         return nullptr;
+    }
+}
+
+bool NWBRecordEngine::addChannelTypeColumn (const std::shared_ptr<AQNWB::NWB::ElectrodesTable>& electrodesTable)
+{
+    // Custom column with the Open Ephys channel type, e.g., to distinguish headstage and ADC channels
+    const std::string path = electrodesTable->getPath() + "/channel_type";
+    try
+    {
+        auto spec = AQNWB::NWB::VectorData::createDataSpec (
+            "channel_type",
+            AQNWB::IO::ArrayDataSetConfig (AQNWB::IO::BaseDataType::U8, { 0 }, { 100 }),
+            "Open Ephys channel type: 0 = headstage (electrode), 1 = auxiliary (AUX), 2 = ADC");
+        if (! checkStatus (electrodesTable->addColumn (spec), "Adding the channel_type column"))
+            return false;
+
+        auto dataset = io->getDataSet (path);
+        return dataset != nullptr
+               && checkStatus (dataset->writeDataBlock ({ electrodeChannelTypes.size() }, { 0 }, AQNWB::IO::BaseDataType::U8, electrodeChannelTypes.data()),
+                               "Writing the channel_type column");
+    }
+    catch (const std::exception& e)
+    {
+        LOGE ("NWB2: Adding the channel_type column failed: ", e.what());
+        return false;
     }
 }
 
@@ -635,6 +668,7 @@ void NWBRecordEngine::setParameter (EngineParameter& parameter)
 void NWBRecordEngine::createRecordingArrays()
 {
     electrodeArrays.clear();
+    electrodeChannelTypes.clear();
     recordingArrays.clear();
     recordingArraysNames.clear();
     spikeRecordingArrays.clear();
@@ -659,6 +693,7 @@ void NWBRecordEngine::createRecordingArrays()
             electrodeArrays.emplace_back();
         }
 
+        electrodeChannelTypes.push_back (static_cast<uint8_t> (channelInfo->getChannelType()));
         auto& group = electrodeArrays.back();
         group.push_back (AQNWB::Channel (channelInfo->getName().toStdString(),
                                          getStreamName (channelInfo),

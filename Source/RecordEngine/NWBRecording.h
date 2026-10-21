@@ -129,6 +129,12 @@ private:
     /** AqNWB channels for all continuous channels entering the Record Node, grouped by stream (electrodes table) */
     std::vector<AQNWB::Types::ChannelVector> electrodeArrays;
 
+    /** Open Ephys channel type (ContinuousChannel::Type) of each electrode, in the order of the electrodes table */
+    std::vector<uint8_t> electrodeChannelTypes;
+
+    /** Add the channel_type column to the electrodes table */
+    bool addChannelTypeColumn (const std::shared_ptr<AQNWB::NWB::ElectrodesTable>& electrodesTable);
+
     /** AqNWB channels for the recorded continuous channels, one ChannelVector per stream (ElectricalSeries) */
     std::vector<AQNWB::Types::ChannelVector> recordingArrays;
 

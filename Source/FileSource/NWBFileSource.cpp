@@ -261,13 +261,29 @@ bool NWBFileSource::readStreamInfo (const std::string& path, StreamInfo& stream,
         stream.segments = readSegments (path + "/sync", stream.numSamples);
     info.startSampleNumber = stream.segments.empty() ? 0 : stream.segments[0].firstSampleNumber;
 
-    // Channel types were stored by earlier versions of the plugin
+    // Channel types: channel_type column of the electrodes table (via the electrodes region of the series),
+    // or the channel_type dataset of the series written by earlier versions of the plugin
     std::vector<int64> channelTypes (stream.numChannels, 0);
+    const std::string electrodesTypePath = "/general/extracellular_ephys/electrodes/channel_type";
     if (io->objectExists (path + "/channel_type"))
     {
         auto types = readInt64s (path + "/channel_type");
         if (static_cast<int> (types.size()) == stream.numChannels)
             channelTypes = types;
+    }
+    else if (io->objectExists (path + "/electrodes") && io->objectExists ("/general/extracellular_ephys/electrodes")
+             && io->objectExists (electrodesTypePath))
+    {
+        const auto electrodes = readInt64s (path + "/electrodes");
+        const auto types = readInt64s (electrodesTypePath);
+        if (static_cast<int> (electrodes.size()) == stream.numChannels)
+        {
+            for (int ch = 0; ch < stream.numChannels; ch++)
+            {
+                if (electrodes[ch] >= 0 && electrodes[ch] < static_cast<int64> (types.size()))
+                    channelTypes[ch] = types[electrodes[ch]];
+            }
+        }
     }
 
     info.name = getName (path);
