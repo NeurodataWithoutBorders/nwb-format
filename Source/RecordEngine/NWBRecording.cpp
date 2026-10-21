@@ -22,6 +22,7 @@
  */
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -38,6 +39,114 @@ using AQNWB::Types::Status;
 
 namespace
 {
+/** Name of the optional file with metadata for the NWB files (see README) */
+const String metadataFileName = "nwb_metadata.json";
+
+/** Session and subject metadata for the NWB file */
+struct SessionMetadata
+{
+    std::string sessionDescription = "Recording with the Open Ephys GUI";
+    std::optional<AQNWB::NWB::Subject::SubjectSpec> subject;
+    std::vector<std::pair<std::string, std::string>> generalText; ///< /general/<key> text datasets
+    std::vector<std::pair<std::string, std::vector<std::string>>> generalTextArrays; ///< /general/<key> text arrays
+};
+
+/** A string or an array of strings of a JSON value */
+std::vector<std::string> toStrings (const var& value)
+{
+    std::vector<std::string> strings;
+    if (value.isArray())
+    {
+        for (const auto& element : *value.getArray())
+            strings.push_back (element.toString().toStdString());
+    }
+    else
+        strings.push_back (value.toString().toStdString());
+    return strings;
+}
+
+/** Read the metadata file from the recording directory or one of its two parent directories (e.g., the
+    folder selected in the GUI). Uses the same structure as NeuroConv metadata ("NWBFile" and "Subject"). */
+SessionMetadata loadSessionMetadata (const File& recordingDirectory)
+{
+    SessionMetadata metadata;
+
+    File file;
+    File directory = recordingDirectory;
+    for (int level = 0; level < 3 && directory.isDirectory(); level++, directory = directory.getParentDirectory())
+    {
+        if (directory.getChildFile (metadataFileName).existsAsFile())
+        {
+            file = directory.getChildFile (metadataFileName);
+            break;
+        }
+    }
+    if (file == File())
+        return metadata;
+
+    var json;
+    const Result result = JSON::parse (file.loadFileAsString(), json);
+    if (result.failed() || ! json.isObject())
+    {
+        LOGE ("NWB2: Unable to read ", file.getFullPathName(), ": ", result.failed() ? result.getErrorMessage() : "not a JSON object");
+        return metadata;
+    }
+    LOGC ("NWB2: Using metadata from ", file.getFullPathName());
+
+    if (auto* nwbFile = json["NWBFile"].getDynamicObject())
+    {
+        for (const auto& property : nwbFile->getProperties())
+        {
+            const std::string key = property.name.toString().toStdString();
+            if (key == "session_description")
+                metadata.sessionDescription = property.value.toString().toStdString();
+            else if (key == "experiment_description" || key == "institution" || key == "lab" || key == "protocol"
+                     || key == "notes" || key == "surgery" || key == "virus" || key == "pharmacology"
+                     || key == "slices")
+                metadata.generalText.emplace_back (key, property.value.toString().toStdString());
+            else if (key == "experimenter" || key == "keywords" || key == "related_publications")
+                metadata.generalTextArrays.emplace_back (key, toStrings (property.value));
+            else
+                LOGE ("NWB2: Unsupported NWBFile metadata '", key, "' in ", file.getFullPathName(), " is ignored");
+        }
+    }
+
+    if (auto* subject = json["Subject"].getDynamicObject())
+    {
+        AQNWB::NWB::Subject::SubjectSpec spec;
+        for (const auto& property : subject->getProperties())
+        {
+            const std::string key = property.name.toString().toStdString();
+            const std::string value = property.value.toString().toStdString();
+            if (key == "subject_id")
+                spec.subjectId = value;
+            else if (key == "species")
+                spec.species = value;
+            else if (key == "sex")
+                spec.sex = value;
+            else if (key == "age")
+                spec.age = value;
+            else if (key == "age__reference" || key == "age_reference")
+                spec.ageReference = value;
+            else if (key == "date_of_birth")
+                spec.dateOfBirth = value;
+            else if (key == "description")
+                spec.description = value;
+            else if (key == "genotype")
+                spec.genotype = value;
+            else if (key == "strain")
+                spec.strain = value;
+            else if (key == "weight")
+                spec.weight = value;
+            else
+                LOGE ("NWB2: Unsupported Subject metadata '", key, "' in ", file.getFullPathName(), " is ignored");
+        }
+        metadata.subject = spec;
+    }
+
+    return metadata;
+}
+
 /** Name of the ElectricalSeries / ElectrodeGroup for the stream of a continuous channel */
 std::string getStreamName (const ContinuousChannel* channel)
 {
@@ -134,9 +243,21 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
 
     String identifier = identifierText.isNotEmpty() ? identifierText : String (AQNWB::generateUuid());
     std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
+    const SessionMetadata metadata = loadSessionMetadata (rootFolder);
 
-    bool success = checkStatus (nwbfile->initialize (identifier.toStdString(), "Recording with the Open Ephys GUI", dataCollection),
+    bool success = checkStatus (nwbfile->initialize (identifier.toStdString(),
+                                                     metadata.sessionDescription,
+                                                     dataCollection,
+                                                     "",
+                                                     "",
+                                                     metadata.subject),
                                 "NWBFile initialization");
+
+    // Further metadata in /general (no AqNWB types for these yet)
+    for (const auto& [key, value] : metadata.generalText)
+        success = success && checkStatus (io->createStringDataSet ("/general/" + key, value), "Writing /general/" + key);
+    for (const auto& [key, values] : metadata.generalTextArrays)
+        success = success && checkStatus (io->createStringDataSet ("/general/" + key, values), "Writing /general/" + key);
 
     if (success)
     {
@@ -348,6 +469,7 @@ bool NWBRecordEngine::createEventsTables()
         "Sample number of each event since the start of acquisition, counted on the clock of the data stream";
 
     std::set<std::string> usedNames;
+    std::map<std::string, int> channelCounts;
     eventTables.clear();
 
     for (int i = 0; i < getNumRecordedEventChannels(); i++)
@@ -355,22 +477,19 @@ bool NWBRecordEngine::createEventsTables()
         const EventChannel* channel = getEventChannel (i);
         EventTable eventTable;
 
-        // Event tables are named after the ElectricalSeries of their data stream (e.g.,
-        // "File Reader-100.example_data.TTL"), so that readers can associate them with the stream.
-        // Events created by a downstream processor (e.g., a Phase Detector) include the processor:
-        // "File Reader-100.example_data.Phase Detector-104.<channel name>"
+        // Event tables are named as the event folders of the Binary format: "<processor>-<id>.<stream>.TTL"
+        // (e.g., "Phase Detector-104.example_data.TTL"), where <processor> is the processor that created the
+        // event channel. Further TTL channels of the same processor and stream are named "TTL_1", "TTL_2", ...
+        // Text events of the Message Center are stored in "messages".
         const bool isMessageCenter = channel->getSourceNodeName() == "Message Center";
-        const String eventSource = channel->getSourceNodeName() + "-" + String (channel->getSourceNodeId());
-        String streamName = eventSource + "." + channel->getStreamName();
-        for (size_t s = 0; s < recordingStreamIds.size(); s++)
-        {
-            if (recordingStreamIds[s] == channel->getStreamId())
-                streamName = recordingArraysNames[s];
-        }
-        const String channelName = streamName.startsWith (eventSource + ".") ? channel->getName()
-                                                                              : eventSource + "." + channel->getName();
+        const String prefix = channel->getSourceNodeName() + "-" + String (channel->getSourceNodeId()) + "."
+                              + channel->getStreamName();
+        const String suffix = channel->getType() == EventChannel::TTL ? "TTL" : "TEXT";
+        const int count = channelCounts[(prefix + "." + suffix).toStdString()]++;
         std::string name = isMessageCenter ? std::string ("messages")
-                                           : (streamName + "." + channelName).replaceCharacter ('/', '_').toStdString();
+                                           : (prefix + "." + suffix + (count > 0 ? "_" + String (count) : String()))
+                                                 .replaceCharacter ('/', '_')
+                                                 .toStdString();
         // make sure the table names are unique
         const std::string baseName = name;
         for (int n = 2; usedNames.count (name) > 0; n++)
@@ -379,14 +498,19 @@ bool NWBRecordEngine::createEventsTables()
         eventTable.name = name;
 
         const float resolution = channel->getSampleRate() > 0 ? 1.0f / channel->getSampleRate() : -1.0f;
-        const std::string description = channel->getDescription().toStdString();
+        // The name of the channel is not part of the table name, so it is included in the description
+        const String channelDescription = channel->getDescription().isNotEmpty() ? ": " + channel->getDescription() : String();
+        const std::string description = ("'" + channel->getName() + "' of " + channel->getSourceNodeName() + " ("
+                                         + String (channel->getSourceNodeId()) + ") on data stream '"
+                                         + channel->getStreamName() + "'" + channelDescription)
+                                            .toStdString();
 
         if (channel->getType() == EventChannel::TTL)
         {
             eventTable.type = EventTableType::TTL;
             eventTable.table = createEventsTable (
                 name,
-                description.empty() ? "TTL events" : description,
+                "TTL events of " + description,
                 "Acquisition system: TTL events from " + channel->getSourceNodeName().toStdString(),
                 resolution,
                 false,
@@ -401,7 +525,7 @@ bool NWBRecordEngine::createEventsTables()
             eventTable.table = createEventsTable (
                 name,
                 isMessageCenter ? "Text messages generated during the experiment (e.g., via the Message Center)"
-                                : (description.empty() ? "Text events" : description),
+                                : "Text events of " + description,
                 isMessageCenter ? "Message Center" : channel->getSourceNodeName().toStdString(),
                 resolution,
                 true,

@@ -377,6 +377,30 @@ void NWBFileSource::addEvent (const String& streamName, int16 channel, int16 sta
     info.text.push_back (text);
 }
 
+int NWBFileSource::findStream (const String& sourceAndStream) const
+{
+    // Events are named after the processor that created them and their data stream ("<processor>-<id>.<stream>"),
+    // the ElectricalSeries after the source of the stream: use the series with the same name, or else the
+    // series of the stream with the same name (if unique)
+    for (int s = 0; s < numRecords; s++)
+    {
+        if (infoArray[s].name == sourceAndStream)
+            return s;
+    }
+    auto getStreamPart = [] (const String& name) { return name.fromFirstOccurrenceOf (".", false, false); };
+    int index = -1;
+    int matches = 0;
+    for (int s = 0; s < numRecords; s++)
+    {
+        if (getStreamPart (infoArray[s].name) == getStreamPart (sourceAndStream))
+        {
+            index = s;
+            matches++;
+        }
+    }
+    return matches == 1 ? index : -1;
+}
+
 void NWBFileSource::readEventsTables()
 {
     if (! io->objectExists ("/events") || streams.empty())
@@ -408,17 +432,18 @@ void NWBFileSource::readEventsTables()
                 continue;
             }
 
-            // TTL events: the table name starts with the name of the ElectricalSeries of its stream
+            // TTL events: tables are named "<processor>-<id>.<stream>.TTL" (or "TTL_<n>")
             if (! io->objectExists (path + "/line") || ! io->objectExists (path + "/state"))
                 continue;
 
-            int streamIndex = -1;
-            for (int s = 0; s < numRecords; s++)
+            const String tableName (name);
+            const String eventType = tableName.fromLastOccurrenceOf (".", false, false);
+            if (! (eventType == "TTL" || eventType.startsWith ("TTL_")))
             {
-                const std::string prefix = infoArray[s].name.toStdString() + ".";
-                if (name.compare (0, prefix.size(), prefix) == 0)
-                    streamIndex = s;
+                LOGD ("NWBFileSource: ", path, " is not a TTL events table; its events are not loaded");
+                continue;
             }
+            const int streamIndex = findStream (tableName.upToLastOccurrenceOf (".", false, false));
             if (streamIndex < 0)
             {
                 LOGD ("NWBFileSource: no data stream found for ", path, "; its events are not loaded");
@@ -448,29 +473,8 @@ void NWBFileSource::readLegacyEvents (const std::string& path)
     // data = +/-(line + 1) and the sample numbers in a "sync" dataset
     const std::string name = getName (path);
     const String streamName = name.substr (0, name.size() - legacyTTLSuffix.size());
-    // The series is named after the event source (e.g. "Network Events-108.example_data.TTL"); if there is
-    // no ElectricalSeries with this name, associate it by the stream name (part after the source) if unique
-    int index = -1;
-    for (int s = 0; s < numRecords; s++)
-    {
-        if (infoArray[s].name == streamName)
-            index = s;
-    }
-    if (index < 0)
-    {
-        auto getStreamPart = [] (const String& name) { return name.fromFirstOccurrenceOf (".", false, false); };
-        int matches = 0;
-        for (int s = 0; s < numRecords; s++)
-        {
-            if (getStreamPart (infoArray[s].name) == getStreamPart (streamName))
-            {
-                index = s;
-                matches++;
-            }
-        }
-        if (matches != 1)
-            index = -1;
-    }
+    // The series is named after the event source, e.g. "Network Events-108.example_data.TTL"
+    const int index = findStream (streamName);
     if (index < 0 || ! isDataset (path + "/sync"))
         return;
 

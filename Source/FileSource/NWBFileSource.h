@@ -98,6 +98,9 @@ private:
     /** Row of the active ElectricalSeries for a sample number, or -1 if the sample number was not recorded */
     static int64 getRow (const StreamInfo& stream, int64 sampleNumber);
 
+    /** Index of the record (ElectricalSeries) of the events of "<processor>-<id>.<stream>", or -1 if not found */
+    int findStream (const String& sourceAndStream) const;
+
     /** Read the TTL and text events from the EventsTables in /events */
     void readEventsTables();
 
