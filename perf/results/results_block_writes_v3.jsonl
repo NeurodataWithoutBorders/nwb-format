@@ -1,0 +1,2 @@
+{"engine": "NWB2", "channels": 3072, "recorded_channels": 3072, "rate_MBps": 184.3, "status_at_end": "RECORD", "kept_up": true, "record_s": 30.04, "written_s": 30.05, "written_fraction": 1.0, "size_GB": 5.564, "cpu_acquire": 0.599, "cpu_record": 1.389, "repeat": 0}
+{"engine": "NWB2", "channels": 3072, "recorded_channels": 3072, "rate_MBps": 184.3, "status_at_end": "RECORD", "kept_up": true, "record_s": 30.04, "written_s": 29.93, "written_fraction": 0.996, "size_GB": 5.539, "cpu_acquire": 0.6, "cpu_record": 1.385, "repeat": 1}

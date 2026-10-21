@@ -64,3 +64,35 @@ Apple M4 (10 cores, 32 GB RAM), internal SSD, macOS 15.7.2, Open Ephys GUI v1.1.
   writes). Extrapolated, NWB2 would reach 100% at ~260 MB/s (~4300 channels at 30 kHz) per Record Node.
 - The GUI only uses batch writes (`writeContinuousDataBatch`) for the Binary engine
   (https://github.com/open-ephys/plugin-GUI/issues/711), so the NWB2 engine receives each block one channel at a time.
+
+## Prototype: writing all channels of a block with one HDF5 write (this branch)
+
+The GUI calls `writeContinuousData` once per channel for each block of a stream (in channel order, with the same
+number of samples). On this branch, the plugin collects the channels of a block (`SeriesBlock` in `NWBRecording.h`)
+and writes the block with a single `ElectricalSeries::writeAllChannels` call when the last channel of the series
+arrives, instead of one `H5Dwrite` per channel. This is what the plugin could do with `writeContinuousDataBatch` once
+the GUI calls it for plugin engines (https://github.com/open-ephys/plugin-GUI/issues/711), but works with GUI v1.1.0.
+If the calls arrive in an unexpected order, the plugin logs an error and falls back to per-channel writes (the
+channels collected for that block are lost in this case; this doesn't happen with GUI v1.1.0).
+
+Three versions (Record Thread busy writing, same setup as above; `results/profile_block_writes_v*.jsonl`):
+
+| Channels | Data rate | Per-channel writes | v1: one write per block | v2: + vectorized conversion, tiled interleave | v3: + faster int16 conversion | Binary |
+|---:|---:|---:|---:|---:|---:|---:|
+| 384 | 23 MB/s | 8.9% | 2.2% | 3.1% | 2.3% | 0.7% |
+| 1536 | 92 MB/s | 34.5% | 12.7% | 12.6% | 7.9% | 3.3% |
+| 3072 | 184 MB/s | 70.5% | 27.6% | 23.1% | 16.2% | 7.2% |
+| 4608 | 276 MB/s | 80.6% | 29.9% | 28.2% | 19.7% | 10.3% |
+
+- v1: convert each channel straight into its column of the interleaved block (scalar, strided writes).
+- v2: convert each channel with the existing JUCE conversion into a channel-major buffer, then interleave the block in
+  64 x 64 tiles.
+- v3: replace the JUCE conversion (`AudioDataConverters::convertFloatToInt16LE`, a scalar loop in double precision)
+  by a loop the compiler vectorizes, with the same arithmetic (float scaling, clipping in double, rounding to nearest
+  with ties to even as `juce::roundToInt`); identical results for 1.7e8 random values including halves and
+  out-of-range values.
+- The recorded data is bit-identical to the source dataset (all 115 million values of a 10 s, 384-channel recording).
+  With v3, 3072 channels at 30 kHz were recorded completely (2 x 30 s, `results/results_block_writes_v3.jsonl`).
+- With v3, the HDF5 write itself takes ~3% of the Record Thread at 3072 channels; NWB2 needs ~2.3x the Record Thread
+  time of Binary (was ~10x). Extrapolated, a Record Node could write ~1 GB/s of NWB2 data on this machine (if the source
+  keeps up). At 4608 channels the data rate is still limited by the File Reader (see above).

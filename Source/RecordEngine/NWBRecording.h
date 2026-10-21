@@ -231,6 +231,21 @@ private:
     std::vector<int16_t> intBuffer;
     std::vector<int64> sampleNumberBuffer;
 
+    /** Block of all channels of an ElectricalSeries. The GUI passes each block of a stream to writeContinuousData
+        one channel at a time (in channel order, with the same number of samples), so the channels are collected
+        here (as int16) and the block is interleaved and written with a single HDF5 write when the
+        last channel of the series arrives, instead of one write per channel. */
+    struct SeriesBlock
+    {
+        std::vector<int16_t> channels; ///< int16 samples of the collected channels, channel by channel
+        std::vector<int16_t> data; ///< the block interleaved [sample][channel], as written to the file
+        std::vector<double> timestamps;
+        int numSamples = 0;
+        size_t channelsCollected = 0;
+        bool enabled = true; ///< false after an unexpected call order (then the channels are written one by one)
+    };
+    std::vector<SeriesBlock> esBlocks;
+
     /** Set after the first failed data write so that errors are only logged once per file */
     bool writeErrorLogged = false;
 

@@ -203,6 +203,41 @@ void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vec
     FloatVectorOperations::copyWithMultiply (scaled.data(), data, 1.0f / (float (0x7fff) * bitVolts), numSamples);
     AudioDataConverters::convertFloatToInt16LE (scaled.data(), out.data(), numSamples);
 }
+
+/** Same conversion as convertToInt16 (scale in float, multiply by 0x7fff and clip in double, round to nearest with ties
+    to even as juce::roundToInt), written as a simple loop that the compiler can vectorize */
+void convertToInt16Fast (const float* data, int numSamples, float bitVolts, int16_t* out)
+{
+    const float scale = 1.0f / (float (0x7fff) * bitVolts);
+    const double maxVal = (double) 0x7fff;
+    for (int i = 0; i < numSamples; i++)
+    {
+        const double value = std::clamp (maxVal * (double) (data[i] * scale), -maxVal, maxVal);
+        out[i] = (int16_t) std::nearbyint (value);
+    }
+}
+
+/** Interleave a block of int16 samples stored channel by channel (src[channel * numSamples + sample]) into
+    sample-major order (dst[sample * numChannels + channel]), in tiles so that both buffers are accessed cache-friendly */
+void interleaveInt16 (const int16_t* src, int16_t* dst, size_t numChannels, size_t numSamples)
+{
+    constexpr size_t tileChannels = 64;
+    constexpr size_t tileSamples = 64;
+    for (size_t c0 = 0; c0 < numChannels; c0 += tileChannels)
+    {
+        const size_t c1 = std::min (c0 + tileChannels, numChannels);
+        for (size_t s0 = 0; s0 < numSamples; s0 += tileSamples)
+        {
+            const size_t s1 = std::min (s0 + tileSamples, numSamples);
+            for (size_t sample = s0; sample < s1; sample++)
+            {
+                int16_t* out = dst + sample * numChannels;
+                for (size_t channel = c0; channel < c1; channel++)
+                    out[channel] = src[channel * numSamples + sample];
+            }
+        }
+    }
+}
 } // namespace
 
 NWBRecordEngine::NWBRecordEngine()
@@ -337,6 +372,7 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
         success = dataset != nullptr;
         esSampleNumbers.push_back (dataset);
         esSampleNumbersWritten.push_back (0);
+        esBlocks.emplace_back();
     }
 
     for (size_t i = 0; success && i < spikeContainerIndexes.size(); i++)
@@ -683,6 +719,7 @@ void NWBRecordEngine::closeFile()
     esSampleNumbers.clear();
     spikeSampleNumbers.clear();
     esSampleNumbersWritten.clear();
+    esBlocks.clear();
     spikeSampleNumbersWritten.clear();
     epochs.reset();
     eventTables.clear();
@@ -716,21 +753,62 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
         return;
 
     const size_t seriesIndex = writeChannelSeriesIndexes[writeChannel];
-    const AQNWB::Channel& channel = recordingArrays[seriesIndex][writeChannelLocalIndexes[writeChannel]];
+    const size_t localIndex = writeChannelLocalIndexes[writeChannel];
+    const AQNWB::Channel& channel = recordingArrays[seriesIndex][localIndex];
+    const size_t numChannels = recordingArrays[seriesIndex].size();
+    Status status = Status::Success;
 
-    convertToInt16 (dataBuffer, size, channel.getBitVolts(), scaledBuffer, intBuffer);
+    SeriesBlock& block = esBlocks[seriesIndex];
+    if (block.enabled && localIndex == 0)
+    {
+        // first channel of a new block
+        block.numSamples = size;
+        block.channelsCollected = 0;
+        if (block.data.size() < (size_t) size * numChannels)
+        {
+            block.data.resize ((size_t) size * numChannels);
+            block.channels.resize ((size_t) size * numChannels);
+        }
+        block.timestamps.assign (timestampBuffer, timestampBuffer + size);
+    }
+    if (block.enabled && (size != block.numSamples || localIndex != block.channelsCollected))
+    {
+        // not the expected call order: write the channels one by one from now on (the collected block is lost)
+        LOGE ("NWB2: Unexpected order of continuous data writes for ", recordingArraysNames[seriesIndex], "; writing channels individually");
+        block.enabled = false;
+    }
 
-    // Timestamps are only written together with the first channel of each ElectricalSeries
-    Status status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
-                                                          esContainerIndexes[seriesIndex],
-                                                          channel,
-                                                          static_cast<SizeType> (size),
-                                                          intBuffer.data(),
-                                                          timestampBuffer);
+    if (block.enabled)
+    {
+        convertToInt16Fast (dataBuffer, size, channel.getBitVolts(), block.channels.data() + localIndex * (size_t) size);
+        if (++block.channelsCollected == numChannels)
+        {
+            // last channel of the block: interleave and write all channels with a single write
+            interleaveInt16 (block.channels.data(), block.data.data(), numChannels, (size_t) size);
+            status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
+                                                           esContainerIndexes[seriesIndex],
+                                                           static_cast<SizeType> (size),
+                                                           block.data.data(),
+                                                           block.timestamps.data());
+            block.channelsCollected = 0;
+        }
+    }
+    else
+    {
+        convertToInt16 (dataBuffer, size, channel.getBitVolts(), scaledBuffer, intBuffer);
+
+        // Timestamps are only written together with the first channel of each ElectricalSeries
+        status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
+                                                       esContainerIndexes[seriesIndex],
+                                                       channel,
+                                                       static_cast<SizeType> (size),
+                                                       intBuffer.data(),
+                                                       timestampBuffer);
+    }
 
     /* All channels of a stream share the timestamps and sample numbers, so these are written
        together with the first channel of each ElectricalSeries */
-    if (writeChannelLocalIndexes[writeChannel] == 0 && size > 0)
+    if (localIndex == 0 && size > 0)
     {
         if (sampleNumberBuffer.size() < (size_t) size)
             sampleNumberBuffer.resize (size);
