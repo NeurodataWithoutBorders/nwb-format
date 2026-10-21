@@ -315,6 +315,27 @@ void NWBFileSource::fillRecordInfo()
 
         readEventsTables();
 
+        // Text messages written by earlier versions of the plugin (AnnotationSeries with a "sync" dataset)
+        if (! streams.empty() && isDataset ("/acquisition/messages/data") && isDataset ("/acquisition/messages/sync")
+            && eventInfoMap.find ("MessageCenter") == eventInfoMap.end())
+        {
+            try
+            {
+                const auto text = readStrings ("/acquisition/messages/data");
+                const auto sampleNumbers = readInt64s ("/acquisition/messages/sync");
+                for (size_t i = 0; i < text.size() && i < sampleNumbers.size(); i++)
+                {
+                    const int64 row = getRow (streams[0], sampleNumbers[i]);
+                    if (row >= 0)
+                        addEvent ("MessageCenter", 0, 0, row, String (text[i]));
+                }
+            }
+            catch (const std::exception& e)
+            {
+                LOGE ("NWBFileSource: unable to read /acquisition/messages: ", e.what());
+            }
+        }
+
         // TTL events written by earlier versions of the plugin
         auto legacy = io->findTypes ("/acquisition", { "core::TimeSeries" }, AQNWB::IO::SearchMode::STOP_ON_TYPE);
         for (const auto& [path, type] : legacy)
@@ -411,11 +432,28 @@ void NWBFileSource::readLegacyEvents (const std::string& path)
     // data = +/-(line + 1) and the sample numbers in a "sync" dataset
     const std::string name = getName (path);
     const String streamName = name.substr (0, name.size() - legacyTTLSuffix.size());
+    // The series is named after the event source (e.g. "Network Events-108.example_data.TTL"); if there is
+    // no ElectricalSeries with this name, associate it by the stream name (part after the source) if unique
     int index = -1;
     for (int s = 0; s < numRecords; s++)
     {
         if (infoArray[s].name == streamName)
             index = s;
+    }
+    if (index < 0)
+    {
+        auto getStreamPart = [] (const String& name) { return name.fromFirstOccurrenceOf (".", false, false); };
+        int matches = 0;
+        for (int s = 0; s < numRecords; s++)
+        {
+            if (getStreamPart (infoArray[s].name) == getStreamPart (streamName))
+            {
+                index = s;
+                matches++;
+            }
+        }
+        if (matches != 1)
+            index = -1;
     }
     if (index < 0 || ! isDataset (path + "/sync"))
         return;
@@ -428,7 +466,7 @@ void NWBFileSource::readLegacyEvents (const std::string& path)
         {
             const int64 row = getRow (streams[index], sampleNumbers[i]);
             if (row >= 0)
-                addEvent (streamName, static_cast<int16> (std::abs (states[i])), states[i] > 0 ? 1 : 0, row, String());
+                addEvent (infoArray[index].name, static_cast<int16> (std::abs (states[i])), states[i] > 0 ? 1 : 0, row, String());
         }
     }
     catch (const std::exception& e)
