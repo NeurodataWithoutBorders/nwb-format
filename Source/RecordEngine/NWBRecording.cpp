@@ -308,12 +308,22 @@ bool NWBRecordEngine::createEventsTables()
         const EventChannel* channel = getEventChannel (i);
         EventTable eventTable;
 
+        // Event tables are named after the ElectricalSeries of their data stream (e.g.,
+        // "File Reader-100.example_data.TTL"), so that readers can associate them with the stream.
+        // Events created by a downstream processor (e.g., a Phase Detector) include the processor:
+        // "File Reader-100.example_data.Phase Detector-104.<channel name>"
         const bool isMessageCenter = channel->getSourceNodeName() == "Message Center";
+        const String eventSource = channel->getSourceNodeName() + "-" + String (channel->getSourceNodeId());
+        String streamName = eventSource + "." + channel->getStreamName();
+        for (size_t s = 0; s < recordingStreamIds.size(); s++)
+        {
+            if (recordingStreamIds[s] == channel->getStreamId())
+                streamName = recordingArraysNames[s];
+        }
+        const String channelName = streamName.startsWith (eventSource + ".") ? channel->getName()
+                                                                              : eventSource + "." + channel->getName();
         std::string name = isMessageCenter ? std::string ("messages")
-                                           : (channel->getSourceNodeName() + "-" + String (channel->getSourceNodeId()) + "."
-                                              + channel->getStreamName() + "." + channel->getName())
-                                                 .replaceCharacter ('/', '_')
-                                                 .toStdString();
+                                           : (streamName + "." + channelName).replaceCharacter ('/', '_').toStdString();
         // make sure the table names are unique
         const std::string baseName = name;
         for (int n = 2; usedNames.count (name) > 0; n++)
