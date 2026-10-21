@@ -53,7 +53,7 @@ Apple M4 (10 cores, 32 GB RAM), internal SSD, macOS 15.7.2, Open Ephys GUI v1.1.
 | 4608 | 276 MB/s | 45-48% | 44-45% | 10.3% | 80.6% |
 | 6144 | 369 MB/s | 39-40% | 37-38% | | |
 
-- Both engines record up to 3072 channels at 30 kHz (184 MB/s) completely, with the same file sizes.
+- Both engines keep up with up to 3072 channels at 30 kHz (184 MB/s): the recordings were never stopped and contain 100% (384 and 1536 channels) and 98.6-99.8% (3072 channels) of the samples, with the same file sizes. The small shortfall at 3072 channels is most likely the test source: the data is contiguous (no gaps apart from the loop points), Binary loses the most although it uses only 7% of the Record Thread, and recording 4 of the 3072 channels yields 100% (`results/check_3072.jsonl`), i.e. presumably the File Reader slowing down slightly when the writes evict the dataset from the page cache (as at 4608 channels). Part of it may be the samples discarded at the end of a recording (the Record Thread writes at most 4096 samples after stopping, https://github.com/open-ephys/plugin-GUI/issues/713).
 - At 4608 and 6144 channels, the File Reader can't keep up while recording (the processing thread is ~70% busy, mostly
   in `FileReader::process`; the data is contiguous but the signal chain runs at ~45% of real time, so the record buffer
   never fills). Recording only 4 of the 4608 channels keeps up, so this is presumably the File Reader re-reading the
@@ -92,7 +92,36 @@ Three versions (Record Thread busy writing, same setup as above; `results/profil
   with ties to even as `juce::roundToInt`); identical results for 1.7e8 random values including halves and
   out-of-range values.
 - The recorded data is bit-identical to the source dataset (all 115 million values of a 10 s, 384-channel recording).
-  With v3, 3072 channels at 30 kHz were recorded completely (2 x 30 s, `results/results_block_writes_v3.jsonl`).
+  With v3, the recordings contain the same share of samples as the other variants (see the comparison below).
 - With v3, the HDF5 write itself takes ~3% of the Record Thread at 3072 channels; NWB2 needs ~2.3x the Record Thread
   time of Binary (was ~10x). Extrapolated, a Record Node could write ~1 GB/s of NWB2 data on this machine (if the source
   keeps up). At 4608 channels the data rate is still limited by the File Reader (see above).
+
+## Comparison: NWB2 (PR), NWB2 with block writes (v3 prototype), Binary
+
+NWB2 (PR): branch `add-aqnwb-v0.4` at 21e67fd; NWB2 (v3): this branch. Release builds, same setup as above.
+
+Record Thread time spent in the engine's continuous data writes (share of the 1 ms samples of the `sample` profiler in
+which the Record Thread is in `writeContinuousData`/`writeContinuousDataBatch`, including conversion, HDF5/file writes
+and flushes; the thread never sleeps, so this is the share of real time spent writing, and 100% means the engine can't
+keep up):
+
+| Channels | Data rate | NWB2 (PR) | NWB2 (v3) | Binary |
+|---:|---:|---:|---:|---:|
+| 384 | 23 MB/s | 8.9% | 2.3% | 0.7% |
+| 1536 | 92 MB/s | 34.5% | 7.9% | 3.3% |
+| 3072 | 184 MB/s | 70.5% | 16.2% | 7.2% |
+| 4608 | 276 MB/s* | 80.6% | 19.7% | 10.3% |
+
+Samples written in 30 s recordings (range over 3 runs; the recording was never stopped by the GUI):
+
+| Channels | Data rate | NWB2 (PR) | NWB2 (v3) | Binary |
+|---:|---:|---|---|---|
+| 384 | 23 MB/s | 100% | 100% | 100% |
+| 1536 | 92 MB/s | 99.8-100% | 100% | 99.9-100% |
+| 3072 | 184 MB/s | 99.3-99.8% | 99.6-100% | 98.6-99.4% |
+| 4608 | 276 MB/s* | 44.1-44.6% | 44.9-46.1% | 45.1-47.7% |
+| 6144 | 369 MB/s* | 37.4-38.1% | 39.0-39.9% | 38.6-40.0% |
+
+\* Above 3072 channels, the File Reader can't keep up while recording (see above), so these rows show the limit of
+the test source, not of the engines.
