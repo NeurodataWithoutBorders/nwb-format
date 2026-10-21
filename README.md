@@ -12,15 +12,33 @@ This plugin can be added via the Open Ephys GUI's built-in Plugin Installer. Fir
 
 The specifications of NWB files written by the Open Ephys GUI are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Recording-data/NWB-format.html).
 
+The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`; recordings within an experiment are appended to the same datasets:
+
+| Data | Location in the NWB file |
+|---|---|
+| Continuous data (one per stream) | `/acquisition/<source>-<id>.<stream>` (`ElectricalSeries`), sample numbers in `sync/sample_numbers` |
+| Spikes (one per electrode) | `/acquisition/<source>-<id>.<stream>.<electrode>` (`SpikeEventSeries`), sample numbers in `sync/sample_numbers` |
+| TTL events (one per event channel) | `/events/<stream series>.<channel>` (`EventsTable` with `line`, `state`, `full_word`, `sample_number`) |
+| Text messages (Message Center) | `/events/messages` (`EventsTable` with `annotation`, `sample_number`) |
+| Recording start sample numbers | `/events/sync_messages` |
+| Start/stop of each recording | `/intervals/epochs` |
+| Electrodes | `/general/extracellular_ephys/electrodes` |
+
+The file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes; it is closed when acquisition starts again or the GUI is closed. The `NWB File` file source (File Reader) can play back NWB files written by this plugin, by earlier versions of this plugin, and by other tools (e.g., PyNWB).
+
 ## Building from source
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
 
-This plugin depends on the [OpenEphysHDF5Lib](https://github.com/open-ephys-plugins/OpenEphysHDF5Lib) common library. Make sure you build and install that first before you proceed with building NWBFormat plugin.
+This plugin depends on the [OpenEphysHDF5Lib](https://github.com/open-ephys-plugins/OpenEphysHDF5Lib) common library. Make sure you build and install that first before you proceed with building NWBFormat plugin. The plugin requires a GUI with plugin API version 10 (GUI v1.x).
 
-**Important:** This plugin is intended for use with the pre-release core application, version 0.6.0. The GUI should be compiled from the [`development-juce6`](https://github.com/open-ephys/plugin-gui/tree/development-juce6) branch, rather than the `master` branch.
+[AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) is included as a git submodule in `Source/aqnwb` and is compiled together with the plugin (no separate installation is needed). Clone this repository with its submodules into a directory at the same level as the `plugin-GUI`:
 
-Then, clone this repository into a directory at the same level as the `plugin-GUI`, e.g.:
+```bash
+git clone --recurse-submodules https://github.com/open-ephys-plugins/nwb-format.git
+```
+
+(or run `git submodule update --init` in an existing clone), e.g.:
  
 ```
 Code
@@ -78,7 +96,13 @@ cmake -G "Xcode" ..
 
 Next, launch Xcode and open the `nwb-format.xcodeproj` file that now lives in the “Build” directory.
 
-Running the `ALL_BUILD` scheme will compile the plugin; running the `INSTALL` scheme will install the `.bundle` file to `/Users/<username>/Library/Application Support/open-ephys/plugins-api`. `NWB2` should now appear as an data format option in the Record Node.
+Running the `ALL_BUILD` scheme will compile the plugin; running the `INSTALL` scheme will install the `.bundle` file to `/Users/<username>/Library/Application Support/open-ephys/plugins-api10`. `NWB2` should now appear as an data format option in the Record Node.
+
+**Note:** installing modifies the bundle and invalidates its code signature, and macOS refuses to load unsigned bundles (the GUI then crashes with "Code Signature Invalid" while loading plugins). Sign the installed bundle (ad hoc) after installing:
+
+```bash
+codesign --force --deep --sign - ~/Library/Application\ Support/open-ephys/plugins-api10/nwb-format.bundle
+```
 
 
 ### Attribution

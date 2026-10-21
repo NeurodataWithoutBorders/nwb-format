@@ -19,6 +19,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        submodules: true  # aqnwb
         fetch-depth: 0
     - name: setup
       run: |
