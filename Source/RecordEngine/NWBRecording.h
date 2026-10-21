@@ -117,6 +117,10 @@ private:
         messages are written with the start time of the recording as timestamp. */
     void writeSyncMessages (bool force);
 
+    /** Set the session start time and the timestamps reference time of the file to the time of timestamp 0,
+        from the 'Software Time' sync message (system time in ms) and the first timestamp of the recording */
+    void setReferenceTime (int64 softwareTimeMs, double firstTimestamp);
+
     /** Log a failed AqNWB operation. Returns true if the status indicates success. */
     static bool checkStatus (AQNWB::Types::Status status, const String& operation);
 
@@ -215,6 +219,9 @@ private:
     double recordingStartTime = 0.0;
     double recordingStopTime = 0.0;
     bool recordingHasData = false;
+
+    /** True once the timestamps reference time of the file was set (from the first recording of the file) */
+    bool referenceTimeSet = false;
 
     /** Reusable buffers for converting float samples to int16 and for sample numbers */
     std::vector<float> scaledBuffer;

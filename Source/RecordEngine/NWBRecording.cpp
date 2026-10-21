@@ -22,6 +22,8 @@
  */
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <optional>
 #include <set>
 #include <string>
@@ -436,7 +438,7 @@ std::shared_ptr<AQNWB::NWB::EventsTable> NWBRecordEngine::createEventsTable (con
             spec = std::make_shared<AQNWB::NWB::TimestampVectorData::DataSpec> (
                 "timestamp",
                 AQNWB::IO::ArrayDataSetConfig (AQNWB::IO::BaseDataType::F64, { 0 }, { 100 }),
-                "Time of each event, in seconds, from the session start time.",
+                "Time of each event, in seconds, relative to the timestamps reference time.",
                 timestampResolution);
         }
     }
@@ -547,7 +549,9 @@ bool NWBRecordEngine::createEventsTables()
         "sync_messages",
         "Start of each recording for each data stream. The timestamp is the first timestamp recorded for the "
         "stream in the recording. For the 'Software Time' message, the sample_number is the system time in "
-        "milliseconds since midnight Jan 1st 1970 UTC and the timestamp is the start time of the recording.",
+        "milliseconds since midnight Jan 1st 1970 UTC and the timestamp is the start time of the recording. "
+        "The timestamps reference time of the file is the system time of the first 'Software Time' message "
+        "minus the start time of the first recording.",
         "Open Ephys Record Node",
         -1.0f,
         true,
@@ -584,6 +588,10 @@ void NWBRecordEngine::writeSyncMessages (bool force)
             continue;
         }
 
+        // The first 'Software Time' message of the file defines the timestamps reference time
+        if (message.streamId == 0 && recordingHasData && ! referenceTimeSet)
+            setReferenceTime (message.sampleNumber, recordingStartTime);
+
         AQNWB::Types::RowData row = { { "timestamp", timestamp },
                                       { "annotation", message.text },
                                       { "stream_id", message.streamId },
@@ -591,6 +599,22 @@ void NWBRecordEngine::writeSyncMessages (bool force)
         checkStatus (syncMessagesTable->addRow (row), "Writing sync message '" + String (message.text) + "'");
     }
     pendingSyncMessages = remaining;
+}
+
+void NWBRecordEngine::setReferenceTime (int64 softwareTimeMs, double firstTimestamp)
+{
+    // The timestamps are seconds since timestamp 0 of the GUI (sample 0 of the main stream, i.e., normally the
+    // start of acquisition), while the file is created when recording starts. The system time is taken when
+    // the Record Node processes the first block of the recording, whose first timestamp is firstTimestamp.
+    referenceTimeSet = true;
+    const int64 referenceMicros = softwareTimeMs * 1000 - static_cast<int64> (std::llround (firstTimestamp * 1e6));
+    const std::string referenceTime = AQNWB::formatTime (
+        std::chrono::system_clock::time_point (std::chrono::duration_cast<std::chrono::system_clock::duration> (
+            std::chrono::microseconds (referenceMicros))));
+
+    checkStatus (nwbfile->setTimestampsReferenceTime (referenceTime), "Setting the timestamps reference time");
+    checkStatus (nwbfile->setSessionStartTime (referenceTime), "Setting the session start time");
+    LOGD ("NWB2: Timestamps reference time ", referenceTime);
 }
 
 void NWBRecordEngine::closeFiles()
@@ -630,6 +654,7 @@ void NWBRecordEngine::closeFile()
     syncMessagesTable.reset();
     pendingSyncMessages.clear();
     streamStartTimes.clear();
+    referenceTimeSet = false;
 
     if (io != nullptr && io->isOpen())
     {
