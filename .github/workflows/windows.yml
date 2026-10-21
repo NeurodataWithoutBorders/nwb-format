@@ -14,7 +14,7 @@ jobs:
 
   build-windows:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-    # Same image as the Open Ephys GUI builds (windows-latest no longer has Visual Studio 17 2022)
+    # Needed for the "Visual Studio 17 2022" generator below
     runs-on: windows-2022
     
     steps:
