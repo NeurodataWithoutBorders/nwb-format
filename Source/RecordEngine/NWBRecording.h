@@ -39,6 +39,9 @@ typedef Array<const ContinuousChannel*> ContinuousGroup;
 namespace NWBRecording
 {
 
+/** Version of the plugin (library version and was_generated_by of the NWB files) */
+inline constexpr const char* pluginVersion = "1.0.0";
+
 /**
 
         Record Engine that writes data into NWB 2.0 format

@@ -49,8 +49,7 @@ struct SessionMetadata
 {
     std::string sessionDescription = "Recording with the Open Ephys GUI";
     std::optional<AQNWB::NWB::Subject::SubjectSpec> subject;
-    std::vector<std::pair<std::string, std::string>> generalText; ///< /general/<key> text datasets
-    std::vector<std::pair<std::string, std::vector<std::string>>> generalTextArrays; ///< /general/<key> text arrays
+    AQNWB::NWB::NWBFile::GeneralMetadataSpec general;
 };
 
 /** A string or an array of strings of a JSON value */
@@ -100,16 +99,51 @@ SessionMetadata loadSessionMetadata (const File& recordingDirectory)
         for (const auto& property : nwbFile->getProperties())
         {
             const std::string key = property.name.toString().toStdString();
+            const std::string value = property.value.toString().toStdString();
+            auto& general = metadata.general;
             if (key == "session_description")
-                metadata.sessionDescription = property.value.toString().toStdString();
-            else if (key == "experiment_description" || key == "institution" || key == "lab" || key == "protocol"
-                     || key == "notes" || key == "surgery" || key == "virus" || key == "pharmacology"
-                     || key == "slices")
-                metadata.generalText.emplace_back (key, property.value.toString().toStdString());
-            else if (key == "experimenter" || key == "keywords" || key == "related_publications")
-                metadata.generalTextArrays.emplace_back (key, toStrings (property.value));
+                metadata.sessionDescription = value;
+            else if (key == "experiment_description")
+                general.experimentDescription = value;
+            else if (key == "experimenter")
+                general.experimenter = toStrings (property.value);
+            else if (key == "institution")
+                general.institution = value;
+            else if (key == "keywords")
+                general.keywords = toStrings (property.value);
+            else if (key == "lab")
+                general.lab = value;
+            else if (key == "notes")
+                general.notes = value;
+            else if (key == "pharmacology")
+                general.pharmacology = value;
+            else if (key == "protocol")
+                general.protocol = value;
+            else if (key == "related_publications")
+                general.relatedPublications = toStrings (property.value);
+            else if (key == "session_id")
+                general.sessionId = value;
+            else if (key == "slices")
+                general.slices = value;
+            else if (key == "source_script")
+                general.sourceScript = value;
+            else if (key == "source_script_file_name")
+                general.sourceScriptFileName = value;
+            else if (key == "stimulus_notes")
+                general.stimulusNotes = value;
+            else if (key == "surgery")
+                general.surgery = value;
+            else if (key == "virus")
+                general.virus = value;
             else
                 LOGE ("NWB2: Unsupported NWBFile metadata '", key, "' in ", file.getFullPathName(), " is ignored");
+        }
+        // The schema requires the file name of the source script
+        if (metadata.general.sourceScript.has_value() != metadata.general.sourceScriptFileName.has_value())
+        {
+            LOGE ("NWB2: 'source_script' and 'source_script_file_name' in ", file.getFullPathName(), " must be set together; both are ignored");
+            metadata.general.sourceScript.reset();
+            metadata.general.sourceScriptFileName.reset();
         }
     }
 
@@ -247,21 +281,20 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
 
     String identifier = identifierText.isNotEmpty() ? identifierText : String (AQNWB::generateUuid());
     std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
-    const SessionMetadata metadata = loadSessionMetadata (rootFolder);
+    SessionMetadata metadata = loadSessionMetadata (rootFolder);
+    metadata.general.wasGeneratedBy = std::vector<std::pair<std::string, std::string>> {
+        { "Open Ephys GUI", CoreServices::getGUIVersion().toStdString() },
+        { "Open Ephys NWB Format plugin", pluginVersion }
+    };
 
     bool success = checkStatus (nwbfile->initialize (identifier.toStdString(),
                                                      metadata.sessionDescription,
                                                      dataCollection,
                                                      "",
                                                      "",
-                                                     metadata.subject),
+                                                     metadata.subject,
+                                                     metadata.general),
                                 "NWBFile initialization");
-
-    // Further metadata in /general (no AqNWB types for these yet)
-    for (const auto& [key, value] : metadata.generalText)
-        success = success && checkStatus (io->createStringDataSet ("/general/" + key, value), "Writing /general/" + key);
-    for (const auto& [key, values] : metadata.generalTextArrays)
-        success = success && checkStatus (io->createStringDataSet ("/general/" + key, values), "Writing /general/" + key);
 
     if (success)
     {
