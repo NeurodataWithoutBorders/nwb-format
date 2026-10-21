@@ -70,7 +70,7 @@ def analyze(path):
     return r
 
 
-def profile(dataset, engine, channels, seconds):
+def profile(dataset, engine, channels, seconds, label=""):
     record_dir = rp.WORK / "recordings"
     record_dir.mkdir(exist_ok=True)
     PROFILES.mkdir(exist_ok=True)
@@ -78,7 +78,7 @@ def profile(dataset, engine, channels, seconds):
     rp.make_config(dataset, engine, record_dir, config)
     log = open(rp.WORK / f"gui_profile_{engine}_{channels}.log", "w")
     gui = subprocess.Popen([str(rp.APP), str(config)], stdout=log, stderr=subprocess.STDOUT)
-    out = PROFILES / f"{engine}_{channels}.txt"
+    out = PROFILES / f"{engine}_{channels}{label}.txt"
     try:
         for _ in range(60):
             try:
@@ -117,6 +117,8 @@ def main():
     p.add_argument("--channels", type=int, nargs="+", default=[384, 1536, 3072])
     p.add_argument("--engines", nargs="+", default=["BINARY", "NWB2"])
     p.add_argument("--seconds", type=float, default=10)
+    p.add_argument("--output", default="profile.jsonl")
+    p.add_argument("--label", default="", help="suffix for the profile file names")
     a = p.parse_args()
     rp.WORK.mkdir(parents=True, exist_ok=True)
     rp.RESULTS.mkdir(exist_ok=True)
@@ -130,9 +132,9 @@ def main():
                 subprocess.run(["uv", "run", "-q", "--isolated", str(rp.PERF / "make_stress_dataset.py"),
                                 str(dataset), str(ch), str(rp.RATE), "5"], check=True)
             for engine in a.engines:
-                r = profile(dataset / "structure.oebin", engine, ch, a.seconds)
+                r = profile(dataset / "structure.oebin", engine, ch, a.seconds, a.label)
                 print(json.dumps(r), flush=True)
-                with open(rp.RESULTS / "profile.jsonl", "a") as f:
+                with open(rp.RESULTS / a.output, "a") as f:
                     f.write(json.dumps(r) + "\n")
     finally:
         if backup.exists():
