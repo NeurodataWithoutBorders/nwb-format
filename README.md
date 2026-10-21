@@ -10,7 +10,7 @@ This plugin can be added via the Open Ephys GUI's built-in Plugin Installer. Fir
 
 ## Usage
 
-The specifications of NWB files written by the Open Ephys GUI are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Recording-data/NWB-format.html).
+The specifications of NWB files written by the Open Ephys GUI are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Data-formats/NWB-format.html).
 
 The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`; recordings within an experiment are appended to the same datasets:
 
