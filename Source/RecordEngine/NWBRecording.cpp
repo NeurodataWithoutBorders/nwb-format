@@ -226,10 +226,12 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
         maxChannels = std::max (maxChannels, group.size());
     const SizeType chunkBytes = 2048 * maxChannels * sizeof (int16_t);
     const SizeType cacheBytes = std::max<SizeType> (AQNWB::IO::HDF5::HDF5IO::getDefaultChunkCacheNumBytes(), 4 * chunkBytes);
-    if (auto hdf5io = std::dynamic_pointer_cast<AQNWB::IO::HDF5::HDF5IO> (io))
-        checkStatus (hdf5io->setChunkCache (cacheBytes), "Setting the chunk cache size");
+    auto hdf5io = std::dynamic_pointer_cast<AQNWB::IO::HDF5::HDF5IO> (io);
+    const Status openStatus = hdf5io != nullptr
+                                  ? hdf5io->open (AQNWB::IO::FileMode::Overwrite, AQNWB::IO::HDF5::ChunkCacheConfig { cacheBytes })
+                                  : io->open (AQNWB::IO::FileMode::Overwrite);
 
-    if (! checkStatus (io->open (AQNWB::IO::FileMode::Overwrite), "Opening " + filename))
+    if (! checkStatus (openStatus, "Opening " + filename))
     {
         io.reset();
         return;
