@@ -25,7 +25,7 @@ jobs:
     - name: setup
       run: |
         cd ../..
-        git clone https://github.com/open-ephys/plugin-GUI.git --branch v1.1.0 --depth 1
+        git clone https://github.com/open-ephys/plugin-GUI.git --branch main --single-branch --depth 1
         cd plugin-GUI/Build
         cmake -G "Visual Studio 17 2022" -A x64 ..
         # Build the GUI to get an import library (open-ephys.lib) that matches the headers: the published
