@@ -24,6 +24,8 @@ The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to wri
 | Start/stop of each recording | `/intervals/epochs` |
 | Electrodes | `/general/extracellular_ephys/electrodes` |
 
+All objects are created when the file is created (the file is written in HDF5 SWMR mode, which doesn't allow adding objects during a recording), so an event channel that never produces an event leaves an empty `EventsTable`. NWB Inspector reports these with `check_empty_table`; use `nwbinspector --ignore check_empty_table` to skip this check. (NWB Inspector 0.7.2 also reports errors in `check_column_binary_capability`, `check_table_values_for_dict` and `check_col_not_nan` for empty tables; this is fixed in NWB Inspector after 0.7.2, see NeurodataWithoutBorders/nwbinspector#729.)
+
 The file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes; it is closed when acquisition starts again or the GUI is closed. The `NWB File` file source (File Reader) can play back NWB files written by this plugin, by earlier versions of this plugin, and by other tools (e.g., PyNWB).
 
 ## Building from source
