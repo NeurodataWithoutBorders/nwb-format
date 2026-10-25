@@ -472,8 +472,9 @@ void NWBFileSource::readEventsTables()
                 continue;
             }
 
-            // Text events (Message Center). The file doesn't store which stream the sample numbers of the messages
-            // refer to; use the first ElectricalSeries (sorted by name), which is correct for files with one stream
+            // Text events (Message Center). The sample numbers of the messages refer to the main sync stream of the
+            // Record Node, which is only named in the table description; use the first ElectricalSeries (sorted by
+            // name), which is correct for files with one stream
             auto annotationColumn = table->readAnnotationColumn();
             if (name == "messages" && annotationColumn != nullptr)
             {

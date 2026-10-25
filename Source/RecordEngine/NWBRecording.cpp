@@ -584,11 +584,26 @@ bool NWBRecordEngine::createEventsTables()
         }
         else if (channel->getType() == EventChannel::TEXT)
         {
+            std::string tableDescription = "Text events of " + description;
+            if (isMessageCenter)
+            {
+                // The sample numbers of the messages are counted on the clock of the main sync stream of the
+                // Record Node (the data stream of the Message Center channel), so name its ElectricalSeries
+                std::string syncStream = "data stream '" + channel->getStreamName().toStdString() + "'";
+                for (size_t s = 0; s < recordingStreamIds.size(); s++)
+                {
+                    if (recordingStreamIds[s] == channel->getStreamId())
+                        syncStream = "ElectricalSeries '" + recordingArraysNames[s] + "'";
+                }
+                tableDescription = "Text messages generated during the experiment (e.g., via the Message Center). "
+                                   "The sample numbers are counted on the clock of the main sync stream of the Record Node, "
+                                   + syncStream + ".";
+            }
+
             eventTable.type = EventTableType::Text;
             eventTable.table = createEventsTable (
                 name,
-                isMessageCenter ? "Text messages generated during the experiment (e.g., via the Message Center)"
-                                : "Text events of " + description,
+                tableDescription,
                 isMessageCenter ? "Message Center" : channel->getSourceNodeName().toStdString(),
                 resolution,
                 true,
