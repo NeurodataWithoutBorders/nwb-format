@@ -28,7 +28,7 @@ Timestamps are the GUI's (synchronized) timestamps, as in the Binary format: sec
 
 ### File handling
 
-The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`, while recordings within an experiment are appended to the same datasets.
+The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`, while recordings within an experiment are appended to the same datasets. If the data directory is changed between recordings, the next recording starts a new file in the new directory. Existing files are never changed: if the directory already contains `experiment<N>.nwb` (e.g., after changing the directory and back), the new file is named after the experiment and its first recording, e.g. `experiment1_recording3.nwb`.
 
 To ensure resilience against data loss, e.g., in case of a GUI crash, the file is written in HDF5 SWMR (single-writer, multiple-reader) mode. Using SWMR mode ensures that HDF5 metadata remains consistent. In addition, the file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes.
 

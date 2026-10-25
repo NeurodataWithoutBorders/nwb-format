@@ -236,30 +236,32 @@ bool NWBRecordEngine::checkStatus (Status status, const String& operation)
 
 void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int recordingNumber)
 {
-    // New file for each experiment, e.g. experiment1.nwb, experiment2.nwb, etc.
-    const File file = rootFolder.getChildFile ("experiment" + String (experimentNumber) + ".nwb");
-
     // Recordings within the same experiment are appended to the datasets of the open file. If the data
     // directory was changed between recordings (which doesn't reset the recording number), start a new
-    // file in the new directory, unless a file of that name exists there already
-    if (recordingNumber > 0 && io != nullptr && io->isOpen())
+    // file in the new directory instead.
+    if (recordingNumber > 0 && io != nullptr && io->isOpen() && rootFolder == openFileFolder)
     {
-        if (rootFolder == openFileFolder || file.exists())
-        {
-            if (rootFolder != openFileFolder)
-                LOGE ("NWB2: ", file.getFullPathName(), " already exists and is not overwritten; recording ", recordingNumber + 1, " is appended to the file in ", openFileFolder.getFullPathName());
-            startEpoch (recordingNumber);
-            return;
-        }
+        startEpoch (recordingNumber);
+        return;
     }
 
     closeFile();
 
-    // Never overwrite an existing file (e.g., of an earlier recording in a data directory that is used again)
+    // New file for each experiment, e.g. experiment1.nwb, experiment2.nwb, etc. Existing files are never
+    // changed: if the directory already contains the file of the experiment (e.g., after changing the data
+    // directory between recordings and back), the file is named after the experiment and its first
+    // recording instead, e.g. experiment1_recording3.nwb
+    File file = rootFolder.getChildFile ("experiment" + String (experimentNumber) + ".nwb");
     if (file.exists())
     {
-        LOGE ("NWB2: ", file.getFullPathName(), " already exists and is not overwritten; the recording is not saved in NWB format");
-        return;
+        const File existingFile = file;
+        file = rootFolder.getChildFile ("experiment" + String (experimentNumber) + "_recording" + String (recordingNumber + 1) + ".nwb");
+        if (file.exists())
+        {
+            LOGE ("NWB2: ", file.getFullPathName(), " already exists and is not overwritten; the recording is not saved in NWB format");
+            return;
+        }
+        LOGC ("NWB2: ", existingFile.getFullPathName(), " already exists; recording ", recordingNumber + 1, " is saved in ", file.getFileName());
     }
 
     openFileFolder = rootFolder;
