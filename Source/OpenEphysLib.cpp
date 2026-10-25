@@ -25,6 +25,7 @@
 #include "RecordEngine/NWBRecording.h"
 #include "FileSource/NWBFileSource.h"
 #include <string>
+#include <string_view>
 #ifdef WIN32
 #include <Windows.h>
 #define EXPORT __declspec (dllexport)
@@ -39,7 +40,9 @@ extern "C" EXPORT void getLibInfo (Plugin::LibraryInfo* info)
 {
     info->apiVersion = PLUGIN_API_VER;
     info->name = "NWB2 Format";
-    info->libVersion = NWBRecording::pluginVersion;
+    // The CI workflows read the version from this line, so it must be a literal (same as NWBRecording::pluginVersion)
+    info->libVersion = "2.0.0";
+    static_assert (std::string_view (NWBRecording::pluginVersion) == "2.0.0", "Update NWBRecording::pluginVersion");
     info->numPlugins = NUM_PLUGINS;
 }
 
