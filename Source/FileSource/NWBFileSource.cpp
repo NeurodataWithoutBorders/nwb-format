@@ -177,6 +177,16 @@ bool NWBFileSource::open (File file)
 
 std::vector<NWBFileSource::Segment> NWBFileSource::readSegments (const DatasetReader& sampleNumbersField, int64 numRows)
 {
+    // The sample numbers may have fewer rows than the data, e.g., in a file of a crashed recording where the two
+    // datasets were not flushed at the same time; the rows without sample numbers are played back without events
+    const SizeArray shape = sampleNumbersField.getShape();
+    const int64 numSampleNumbers = shape.empty() ? 0 : static_cast<int64> (shape[0]);
+    if (numSampleNumbers < numRows)
+    {
+        LOGC ("NWBFileSource: ", sampleNumbersField.getPath(), " has ", numSampleNumbers, " sample numbers for ", numRows, " samples");
+        numRows = numSampleNumbers;
+    }
+
     // Read in chunks to avoid loading all sample numbers of long recordings into memory
     std::vector<Segment> segments;
     const int64 chunkSize = 1 << 20;
@@ -229,6 +239,11 @@ bool NWBFileSource::readStreamInfo (const std::string& path, StreamInfo& stream,
     if (shape.empty() || shape.size() > 2)
     {
         LOGE ("NWBFileSource: ", path, " has unsupported data dimensions and is skipped");
+        return false;
+    }
+    if (shape[0] == 0)
+    {
+        LOGC ("NWBFileSource: ", path, " contains no samples and is skipped");
         return false;
     }
 
@@ -457,7 +472,8 @@ void NWBFileSource::readEventsTables()
                 continue;
             }
 
-            // Text events (Message Center); the sample numbers refer to the main (first) stream
+            // Text events (Message Center). The file doesn't store which stream the sample numbers of the messages
+            // refer to; use the first ElectricalSeries (sorted by name), which is correct for files with one stream
             auto annotationColumn = table->readAnnotationColumn();
             if (name == "messages" && annotationColumn != nullptr)
             {

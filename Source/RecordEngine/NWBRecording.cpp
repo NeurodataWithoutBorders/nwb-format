@@ -236,19 +236,36 @@ bool NWBRecordEngine::checkStatus (Status status, const String& operation)
 
 void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int recordingNumber)
 {
-    // Recordings within the same experiment are appended to the datasets of the open file
+    // New file for each experiment, e.g. experiment1.nwb, experiment2.nwb, etc.
+    const File file = rootFolder.getChildFile ("experiment" + String (experimentNumber) + ".nwb");
+
+    // Recordings within the same experiment are appended to the datasets of the open file. If the data
+    // directory was changed between recordings (which doesn't reset the recording number), start a new
+    // file in the new directory, unless a file of that name exists there already
     if (recordingNumber > 0 && io != nullptr && io->isOpen())
     {
-        startEpoch (recordingNumber);
-        return;
+        if (rootFolder == openFileFolder || file.exists())
+        {
+            if (rootFolder != openFileFolder)
+                LOGE ("NWB2: ", file.getFullPathName(), " already exists and is not overwritten; recording ", recordingNumber + 1, " is appended to the file in ", openFileFolder.getFullPathName());
+            startEpoch (recordingNumber);
+            return;
+        }
     }
 
     closeFile();
+
+    // Never overwrite an existing file (e.g., of an earlier recording in a data directory that is used again)
+    if (file.exists())
+    {
+        LOGE ("NWB2: ", file.getFullPathName(), " already exists and is not overwritten; the recording is not saved in NWB format");
+        return;
+    }
+
+    openFileFolder = rootFolder;
     createRecordingArrays();
 
-    // New file for each experiment, e.g. experiment1.nwb, experiment2.nwb, etc.
-    String filename = rootFolder.getFullPathName() + rootFolder.getSeparatorString()
-                      + "experiment" + String (experimentNumber) + ".nwb";
+    const String filename = file.getFullPathName();
 
     io = AQNWB::createIO ("HDF5", filename.toStdString());
 
@@ -699,6 +716,7 @@ void NWBRecordEngine::closeFile()
     pendingSyncMessages.clear();
     streamStartTimes.clear();
     referenceTimeSet = false;
+    openFileFolder = File();
 
     if (io != nullptr && io->isOpen())
     {

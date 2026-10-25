@@ -129,6 +129,9 @@ private:
     /** NWB file */
     std::shared_ptr<AQNWB::NWB::NWBFile> nwbfile;
 
+    /** Recording directory (rootFolder of openFiles) of the open file */
+    File openFileFolder;
+
     /** AqNWB channels for all continuous channels entering the Record Node, grouped by stream (electrodes table) */
     std::vector<AQNWB::Types::ChannelVector> electrodeArrays;
 

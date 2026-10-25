@@ -30,7 +30,7 @@ Timestamps are the GUI's (synchronized) timestamps, as in the Binary format: sec
 
 The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`, while recordings within an experiment are appended to the same datasets.
 
-To ensure resiliance against data loss, e.g., in case of a GUI crash,  the file is written in HDF5 SWMR (single-writer, multiple-reader) mode. Using SWMR mode ensures that HDF5 metadata remains consistent. In additon, the file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes.
+To ensure resilience against data loss, e.g., in case of a GUI crash, the file is written in HDF5 SWMR (single-writer, multiple-reader) mode. Using SWMR mode ensures that HDF5 metadata remains consistent. In addition, the file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes.
 
 Using SWMR mode has the limitation that objects cannot be added to the file while a recording is ongoing. As such, all objects are created when the file is created. As a result, an event channel that never produces an event results in an empty `EventsTable`. Depending on your configuration, NWB Inspector may flag empty tables via the `check_empty_table` check. To avoid this, use `nwbinspector --ignore check_empty_table` to skip this check. 
 
