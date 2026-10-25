@@ -2,7 +2,7 @@
 
 ![header-image](Resources/header-image.png)
 
-A Record Engine plugin for the Open Ephys GUI based on the [Neurodata Without Borders 2.X specification](https://nwb-schema.readthedocs.io/en/latest/format_release_notes.html).
+A Record Engine (write) and File Reader (read) plugin for the Open Ephys GUI based on the [Neurodata Without Borders 2.X specification](https://nwb-schema.readthedocs.io/en/latest/format_release_notes.html). 
 
 ## Installation
 
@@ -10,9 +10,9 @@ This plugin can be added via the Open Ephys GUI's built-in Plugin Installer. Fir
 
 ## Usage
 
-The specifications of NWB files written by the Open Ephys GUI are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Data-formats/NWB-format.html).
+### Data layout
 
-The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`; recordings within an experiment are appended to the same datasets:
+The specifications of NWB files written by the Open Ephys GUI are available [here](https://open-ephys.github.io/gui-docs/User-Manual/Data-formats/NWB-format.html).
 
 | Data | Location in the NWB file |
 |---|---|
@@ -26,9 +26,15 @@ The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to wri
 
 Timestamps are the GUI's (synchronized) timestamps, as in the Binary format: seconds since timestamp 0 of the GUI (sample 0 of the main stream, normally the start of acquisition). `timestamps_reference_time` (and `session_start_time`) are set to the time of timestamp 0. They are computed from the system time when the first recording of the file starts (the 'Software Time' sync message) minus the first recorded timestamp, so they are accurate to about one processing block.
 
-All objects are created when the file is created (the file is written in HDF5 SWMR mode, which doesn't allow adding objects during a recording), so an event channel that never produces an event leaves an empty `EventsTable`. NWB Inspector reports these with `check_empty_table`; use `nwbinspector --ignore check_empty_table` to skip this check. (NWB Inspector 0.7.2 also reports errors in `check_column_binary_capability`, `check_table_values_for_dict` and `check_col_not_nan` for empty tables; this is fixed in NWB Inspector after 0.7.2, see NeurodataWithoutBorders/nwbinspector#729.)
+### File handling
 
-The file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes; it is closed when acquisition starts again or the GUI is closed. The `NWB File` file source (File Reader) can play back NWB files written by this plugin, by earlier versions of this plugin, and by other tools (e.g., PyNWB).
+The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`, while recordings within an experiment are appended to the same datasets.
+
+To ensure resiliance against data loss, e.g., in case of a GUI crash,  the file is written in HDF5 SWMR (single-writer, multiple-reader) mode. Using SWMR mode ensures that HDF5 metadata remains consistent. In additon, the file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes.
+
+Using SWMR mode has the limitation that objects cannot be added to the file while a recording is ongoing. As such, all objects are created when the file is created. As a result, an event channel that never produces an event results in an empty `EventsTable`. Depending on your configuration, NWB Inspector may flag empty tables via the `check_empty_table` check. To avoid this, use `nwbinspector --ignore check_empty_table` to skip this check. 
+
+The `NWB File` file source (File Reader) can play back NWB files written by this plugin, by earlier versions of this plugin, and by other tools (e.g., PyNWB).
 
 ### Session and subject metadata
 
@@ -77,7 +83,7 @@ First, follow the instructions on [this page](https://open-ephys.github.io/gui-d
 
 This plugin depends on the [OpenEphysHDF5Lib](https://github.com/open-ephys-plugins/OpenEphysHDF5Lib) common library. Make sure you build and install that first before you proceed with building NWBFormat plugin. The plugin requires a GUI with plugin API version 10 (GUI v1.x).
 
-[AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) is included as a git submodule in `Source/aqnwb` and is compiled together with the plugin (no separate installation is needed). Clone this repository with its submodules into a directory at the same level as the `plugin-GUI`:
+[AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) is included as a git submodule in `Source/aqnwb` and is compiled together with the plugin, so no separate installation of AqNWB is needed. Clone this repository with its submodules into a directory at the same level as the `plugin-GUI`:
 
 ```bash
 git clone --recurse-submodules https://github.com/open-ephys-plugins/nwb-format.git
@@ -152,5 +158,4 @@ codesign --force --deep --sign - ~/Library/Application\ Support/open-ephys/plugi
 
 ### Attribution
 
-This plugin, along with the OpenEphysHDF5Lib, were developed collaboratively by Aaron Cuevas Lopez, Pavel Kulik, and Josh Siegle. It is based on the [NWB Format Specification](https://nwb-schema.readthedocs.io/en/latest/format_release_notes.html).
- 
+This plugin, along with the OpenEphysHDF5Lib, were developed collaboratively by Aaron Cuevas Lopez, Pavel Kulik, and Josh Siegle. Enhancements of the plugin to integrate AqNWB and support NWB 2.11+ have been contributed by Stephanie Prince and Oliver Ruebel.
