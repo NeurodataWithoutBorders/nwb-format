@@ -31,6 +31,13 @@
 #include <vector>
 
 #include "io/BaseIO.hpp"
+#include "io/ReadIO.hpp"
+#include "nwb/ecephys/ElectricalSeries.hpp"
+
+/** Lazy reader for a dataset or attribute of any type (the values are read with the type stored in the file) */
+template <AQNWB::Types::StorageObjectType OTYPE>
+using FieldReader = AQNWB::IO::ReadDataWrapper<OTYPE, std::any>;
+using DatasetReader = FieldReader<AQNWB::NWB::DatasetField>;
 
 /**
     A File Source plugin that can read data from NWB 2.x files using AqNWB
@@ -81,7 +88,9 @@ private:
     /** Information about an ElectricalSeries needed for reading */
     struct StreamInfo
     {
-        std::string path;
+        std::shared_ptr<AQNWB::NWB::ElectricalSeries> series;
+        std::shared_ptr<DatasetReader> data; ///< reader for the data of the series
+        bool data2D = true; ///< false for 1D data (a single channel)
         int64 numSamples = 0;
         int numChannels = 0;
         std::vector<float> scale; ///< factor to convert the stored values to microvolts, per channel
@@ -92,8 +101,8 @@ private:
     /** Read the information about the ElectricalSeries at the given path. Returns false if not supported */
     bool readStreamInfo (const std::string& path, StreamInfo& stream, RecordInfo& info);
 
-    /** Read the sample numbers of the ElectricalSeries (if available) as segments of consecutive sample numbers */
-    std::vector<Segment> readSegments (const std::string& sampleNumbersPath, int64 numRows);
+    /** Read the sample numbers of an ElectricalSeries as segments of consecutive sample numbers */
+    static std::vector<Segment> readSegments (const DatasetReader& sampleNumbers, int64 numRows);
 
     /** Row of the active ElectricalSeries for a sample number, or -1 if the sample number was not recorded */
     static int64 getRow (const StreamInfo& stream, int64 sampleNumber);
@@ -107,16 +116,15 @@ private:
     /** Read the TTL events from legacy TTL TimeSeries in /acquisition (files written by the original plugin) */
     void readLegacyEvents (const std::string& path);
 
+    /** Read the text messages from the legacy AnnotationSeries /acquisition/messages (files written by the
+        original plugin) */
+    void readLegacyMessages (const std::string& path);
+
     /** Add an event to the events of a stream */
     void addEvent (const String& streamName, int16 channel, int16 state, int64 row, const String& text);
 
-    /** Read a 1D dataset as a vector of doubles (or int64) */
-    std::vector<double> readDoubles (const std::string& path, int64 start = 0, int64 count = -1) const;
-    std::vector<int64> readInt64s (const std::string& path, int64 start = 0, int64 count = -1) const;
-    std::vector<std::string> readStrings (const std::string& path) const;
-
-    /** True if the object at the path exists and is a dataset */
-    bool isDataset (const std::string& path) const;
+    /** True if the field exists and is a dataset (e.g., the legacy "sync" dataset rather than the sync group) */
+    bool isDataset (const DatasetReader& field) const;
 
     std::shared_ptr<AQNWB::IO::BaseIO> io;
 

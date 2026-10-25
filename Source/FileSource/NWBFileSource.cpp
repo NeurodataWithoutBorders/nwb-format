@@ -28,9 +28,17 @@
 #include <map>
 
 #include "Utils.hpp"
+#include "nwb/base/TimeSeries.hpp"
+#include "nwb/event/EventsTable.hpp"
+#include "nwb/file/ElectrodesTable.hpp"
+#include "nwb/hdmf/table/VectorData.hpp"
+#include "nwb/misc/AnnotationSeries.hpp"
 
 using AQNWB::IO::BaseDataType;
 using AQNWB::IO::DataBlockGeneric;
+using AQNWB::NWB::DatasetField;
+using AQNWB::NWB::RegisteredType;
+using AQNWB::NWB::VectorData;
 using AQNWB::Types::SizeArray;
 using AQNWB::Types::SizeType;
 
@@ -74,6 +82,43 @@ std::vector<T> convertValues (const DataBlockGeneric& block)
     }
 }
 
+/** Read all values of a dataset or attribute and convert them to the given type */
+template <typename T, AQNWB::Types::StorageObjectType OTYPE>
+std::vector<T> readValues (const FieldReader<OTYPE>& field)
+{
+    return convertValues<T> (field.valuesGeneric());
+}
+
+/** Read count values of a 1D dataset starting at start and convert them to the given type */
+template <typename T>
+std::vector<T> readValues (const DatasetReader& field, int64 start, int64 count)
+{
+    return convertValues<T> (field.valuesGeneric ({ static_cast<SizeType> (start) }, { static_cast<SizeType> (count) }));
+}
+
+/** Read a scalar dataset or attribute, or return defaultValue if it doesn't exist */
+template <typename T, AQNWB::Types::StorageObjectType OTYPE>
+T readScalar (const std::unique_ptr<FieldReader<OTYPE>>& field, T defaultValue)
+{
+    if (field == nullptr || ! field->exists())
+        return defaultValue;
+    const auto values = readValues<T> (*field);
+    return values.empty() ? defaultValue : values[0];
+}
+
+/** Read all values of a text dataset */
+std::vector<std::string> readStrings (const DatasetReader& field)
+{
+    return std::any_cast<std::vector<std::string>> (field.valuesGeneric().data);
+}
+
+/** Read the data of a column of a table, or return nullptr if the column doesn't exist */
+std::unique_ptr<DatasetReader> readColumnData (AQNWB::NWB::DynamicTable& table, const std::string& name)
+{
+    auto column = table.readColumn<VectorData> (name);
+    return column != nullptr ? column->readData() : nullptr;
+}
+
 /** Last component of a path */
 std::string getName (const std::string& path)
 {
@@ -84,10 +129,11 @@ std::string getName (const std::string& path)
 const std::string legacyTTLSuffix = ".TTL";
 } // namespace
 
-bool NWBFileSource::isDataset (const std::string& path) const
+bool NWBFileSource::isDataset (const DatasetReader& field) const
 {
-    // check existence first: getStorageObjectType reports an HDF5 error for paths that do not exist
-    return io->objectExists (path) && io->getStorageObjectType (path) == AQNWB::Types::StorageObjectType::Dataset;
+    // ReadDataWrapper::exists() is also true for a group at the path, so check the type of the object.
+    // Check existence first: getStorageObjectType reports an HDF5 error for paths that do not exist
+    return field.exists() && io->getStorageObjectType (field.getPath()) == AQNWB::Types::StorageObjectType::Dataset;
 }
 
 NWBFileSource::NWBFileSource() : samplePos (0)
@@ -129,33 +175,14 @@ bool NWBFileSource::open (File file)
     }
 }
 
-std::vector<double> NWBFileSource::readDoubles (const std::string& path, int64 start, int64 count) const
-{
-    if (count < 0)
-        return convertValues<double> (io->readDataset (path));
-    return convertValues<double> (io->readDataset (path, { static_cast<SizeType> (start) }, { static_cast<SizeType> (count) }));
-}
-
-std::vector<int64> NWBFileSource::readInt64s (const std::string& path, int64 start, int64 count) const
-{
-    if (count < 0)
-        return convertValues<int64> (io->readDataset (path));
-    return convertValues<int64> (io->readDataset (path, { static_cast<SizeType> (start) }, { static_cast<SizeType> (count) }));
-}
-
-std::vector<std::string> NWBFileSource::readStrings (const std::string& path) const
-{
-    return std::any_cast<std::vector<std::string>> (io->readDataset (path).data);
-}
-
-std::vector<NWBFileSource::Segment> NWBFileSource::readSegments (const std::string& sampleNumbersPath, int64 numRows)
+std::vector<NWBFileSource::Segment> NWBFileSource::readSegments (const DatasetReader& sampleNumbersField, int64 numRows)
 {
     // Read in chunks to avoid loading all sample numbers of long recordings into memory
     std::vector<Segment> segments;
     const int64 chunkSize = 1 << 20;
     for (int64 start = 0; start < numRows; start += chunkSize)
     {
-        const auto sampleNumbers = readInt64s (sampleNumbersPath, start, std::min (chunkSize, numRows - start));
+        const auto sampleNumbers = readValues<int64> (sampleNumbersField, start, std::min (chunkSize, numRows - start));
         for (size_t i = 0; i < sampleNumbers.size(); i++)
         {
             const int64 row = start + static_cast<int64> (i);
@@ -189,28 +216,35 @@ int64 NWBFileSource::getRow (const StreamInfo& stream, int64 sampleNumber)
 
 bool NWBFileSource::readStreamInfo (const std::string& path, StreamInfo& stream, RecordInfo& info)
 {
-    const std::string dataPath = path + "/data";
-    const SizeArray shape = io->getStorageObjectShape (dataPath);
+    auto series = RegisteredType::create<AQNWB::NWB::ElectricalSeries> (path, io);
+    if (series == nullptr)
+    {
+        LOGE ("NWBFileSource: unable to read ", path, "; it is skipped");
+        return false;
+    }
+
+    // Read the data with the type stored in the file (convertValues converts it to float)
+    std::shared_ptr<DatasetReader> data = series->readData<std::any>();
+    const SizeArray shape = data->getShape();
     if (shape.empty() || shape.size() > 2)
     {
         LOGE ("NWBFileSource: ", path, " has unsupported data dimensions and is skipped");
         return false;
     }
 
-    stream.path = path;
+    stream.series = series;
+    stream.data = data;
+    stream.data2D = shape.size() > 1;
     stream.numSamples = static_cast<int64> (shape[0]);
     stream.numChannels = shape.size() > 1 ? static_cast<int> (shape[1]) : 1;
 
     // Scaling to microvolts: volts = data * conversion * channel_conversion + offset
-    float conversion = 1.0f;
-    if (io->attributeExists (dataPath + "/conversion"))
-        conversion = convertValues<float> (io->readAttribute (dataPath + "/conversion"))[0];
-    float offset = 0.0f;
-    if (io->attributeExists (dataPath + "/offset"))
-        offset = convertValues<float> (io->readAttribute (dataPath + "/offset"))[0];
+    float conversion = readScalar<float> (series->readDataConversion<std::any>(), 1.0f);
+    const float offset = readScalar<float> (series->readDataOffset<std::any>(), 0.0f);
     std::vector<double> channelConversion (stream.numChannels, 1.0);
-    if (io->objectExists (path + "/channel_conversion"))
-        channelConversion = readDoubles (path + "/channel_conversion");
+    auto channelConversionField = series->readChannelConversion<std::any>();
+    if (channelConversionField->exists())
+        channelConversion = readValues<double> (*channelConversionField);
     if (static_cast<int> (channelConversion.size()) != stream.numChannels)
     {
         LOGE ("NWBFileSource: ", path, " has an invalid channel_conversion and is skipped");
@@ -219,7 +253,8 @@ bool NWBFileSource::readStreamInfo (const std::string& path, StreamInfo& stream,
     // Files written by earlier versions of the plugin (identified by their "sync" dataset) store the
     // conversion factor both in data.conversion and in channel_conversion; as in the original reader,
     // only channel_conversion is applied for these files
-    const bool legacyLayout = isDataset (path + "/sync");
+    auto sync = series->readField<DatasetField, std::any> ("sync");
+    const bool legacyLayout = isDataset (*sync);
     if (legacyLayout)
         conversion = 1.0f;
     stream.scale.resize (stream.numChannels);
@@ -229,14 +264,17 @@ bool NWBFileSource::readStreamInfo (const std::string& path, StreamInfo& stream,
 
     // Sample rate: from starting_time.rate, or estimated from the timestamps
     info.sampleRate = -1.0f;
-    if (io->objectExists (path + "/starting_time") && io->attributeExists (path + "/starting_time/rate"))
+    // (Check starting_time first: probing an attribute of a missing dataset reports an HDF5 error.)
+    auto timestampsField = series->readTimestamps<std::any>();
+    auto rateField = series->readStartingTimeRate<std::any>();
+    if (series->readStartingTime()->exists() && rateField->exists())
     {
-        info.sampleRate = convertValues<float> (io->readAttribute (path + "/starting_time/rate"))[0];
+        info.sampleRate = readScalar<float> (rateField, -1.0f);
     }
-    else if (io->objectExists (path + "/timestamps"))
+    else if (timestampsField->exists())
     {
         const int64 n = std::min<int64> (stream.numSamples, 1001);
-        const auto timestamps = readDoubles (path + "/timestamps", 0, n);
+        const auto timestamps = readValues<double> (*timestampsField, 0, n);
         std::vector<double> diffs;
         for (size_t i = 1; i < timestamps.size(); i++)
             diffs.push_back (timestamps[i] - timestamps[i - 1]);
@@ -254,34 +292,46 @@ bool NWBFileSource::readStreamInfo (const std::string& path, StreamInfo& stream,
         return false;
     }
 
-    // Sample numbers: sync/sample_numbers, or the "sync" dataset written by earlier versions of the plugin
-    if (io->objectExists (path + "/sync") && io->objectExists (path + "/sync/sample_numbers"))
-        stream.segments = readSegments (path + "/sync/sample_numbers", stream.numSamples);
-    else if (isDataset (path + "/sync"))
-        stream.segments = readSegments (path + "/sync", stream.numSamples);
+    // Sample numbers: sync/sample_numbers, or the "sync" dataset written by earlier versions of the plugin.
+    // (Check sync first: probing a path below a missing group reports an HDF5 error.)
+    if (legacyLayout)
+    {
+        stream.segments = readSegments (*sync, stream.numSamples);
+    }
+    else if (sync->exists())
+    {
+        auto sampleNumbers = series->readField<DatasetField, std::any> ("sync/sample_numbers");
+        if (sampleNumbers->exists())
+            stream.segments = readSegments (*sampleNumbers, stream.numSamples);
+    }
     info.startSampleNumber = stream.segments.empty() ? 0 : stream.segments[0].firstSampleNumber;
 
     // Channel types: channel_type column of the electrodes table (via the electrodes region of the series),
     // or the channel_type dataset of the series written by earlier versions of the plugin
     std::vector<int64> channelTypes (stream.numChannels, 0);
-    const std::string electrodesTypePath = "/general/extracellular_ephys/electrodes/channel_type";
-    if (io->objectExists (path + "/channel_type"))
+    auto seriesChannelTypes = series->readField<DatasetField, std::any> ("channel_type");
+    auto electrodesField = series->readElectrodes<std::any>();
+    if (seriesChannelTypes->exists())
     {
-        auto types = readInt64s (path + "/channel_type");
+        auto types = readValues<int64> (*seriesChannelTypes);
         if (static_cast<int> (types.size()) == stream.numChannels)
             channelTypes = types;
     }
-    else if (io->objectExists (path + "/electrodes") && io->objectExists ("/general/extracellular_ephys/electrodes")
-             && io->objectExists (electrodesTypePath))
+    else if (electrodesField->exists())
     {
-        const auto electrodes = readInt64s (path + "/electrodes");
-        const auto types = readInt64s (electrodesTypePath);
-        if (static_cast<int> (electrodes.size()) == stream.numChannels)
+        auto electrodesTable = series->readElectrodesTable();
+        auto typesColumn = electrodesTable != nullptr ? readColumnData (*electrodesTable, "channel_type") : nullptr;
+        if (typesColumn != nullptr)
         {
-            for (int ch = 0; ch < stream.numChannels; ch++)
+            const auto electrodes = readValues<int64> (*electrodesField);
+            const auto types = readValues<int64> (*typesColumn);
+            if (static_cast<int> (electrodes.size()) == stream.numChannels)
             {
-                if (electrodes[ch] >= 0 && electrodes[ch] < static_cast<int64> (types.size()))
-                    channelTypes[ch] = types[electrodes[ch]];
+                for (int ch = 0; ch < stream.numChannels; ch++)
+                {
+                    if (electrodes[ch] >= 0 && electrodes[ch] < static_cast<int64> (types.size()))
+                        channelTypes[ch] = types[electrodes[ch]];
+                }
             }
         }
     }
@@ -331,35 +381,21 @@ void NWBFileSource::fillRecordInfo()
 
         readEventsTables();
 
-        // Text messages written by earlier versions of the plugin (AnnotationSeries with a "sync" dataset)
-        if (! streams.empty() && isDataset ("/acquisition/messages/data") && isDataset ("/acquisition/messages/sync")
-            && eventInfoMap.find ("MessageCenter") == eventInfoMap.end())
-        {
-            try
-            {
-                const auto text = readStrings ("/acquisition/messages/data");
-                const auto sampleNumbers = readInt64s ("/acquisition/messages/sync");
-                for (size_t i = 0; i < text.size() && i < sampleNumbers.size(); i++)
-                {
-                    const int64 row = getRow (streams[0], sampleNumbers[i]);
-                    if (row >= 0)
-                        addEvent ("MessageCenter", 0, 0, row, String (text[i]));
-                }
-            }
-            catch (const std::exception& e)
-            {
-                LOGE ("NWBFileSource: unable to read /acquisition/messages: ", e.what());
-            }
-        }
-
-        // TTL events written by earlier versions of the plugin
-        auto legacy = io->findTypes ("/acquisition", { "core::TimeSeries" }, AQNWB::IO::SearchMode::STOP_ON_TYPE);
+        // Text messages and TTL events written by earlier versions of the plugin
+        auto legacy = io->findTypes ("/acquisition", { "core::TimeSeries", "core::AnnotationSeries" }, AQNWB::IO::SearchMode::STOP_ON_TYPE);
         for (const auto& [path, type] : legacy)
         {
             const std::string name = getName (path);
-            if (name.size() > legacyTTLSuffix.size()
-                && name.compare (name.size() - legacyTTLSuffix.size(), legacyTTLSuffix.size(), legacyTTLSuffix) == 0)
+            if (type == "core::AnnotationSeries")
+            {
+                if (name == "messages")
+                    readLegacyMessages (path);
+            }
+            else if (name.size() > legacyTTLSuffix.size()
+                     && name.compare (name.size() - legacyTTLSuffix.size(), legacyTTLSuffix.size(), legacyTTLSuffix) == 0)
+            {
                 readLegacyEvents (path);
+            }
         }
     }
     catch (const std::exception& e)
@@ -413,17 +449,20 @@ void NWBFileSource::readEventsTables()
         const std::string name = getName (path);
         try
         {
-            if (! io->objectExists (path + "/sample_number"))
+            auto table = RegisteredType::create<AQNWB::NWB::EventsTable> (path, io);
+            auto sampleNumberColumn = table != nullptr ? readColumnData (*table, "sample_number") : nullptr;
+            if (sampleNumberColumn == nullptr)
             {
                 LOGD ("NWBFileSource: ", path, " has no sample_number column; its events are not loaded");
                 continue;
             }
 
             // Text events (Message Center); the sample numbers refer to the main (first) stream
-            if (name == "messages" && io->objectExists (path + "/annotation"))
+            auto annotationColumn = table->readAnnotationColumn();
+            if (name == "messages" && annotationColumn != nullptr)
             {
-                const auto sampleNumbers = readInt64s (path + "/sample_number");
-                const auto text = readStrings (path + "/annotation");
+                const auto sampleNumbers = readValues<int64> (*sampleNumberColumn);
+                const auto text = readStrings (*annotationColumn->readData());
                 for (size_t i = 0; i < sampleNumbers.size() && i < text.size(); i++)
                 {
                     const int64 row = getRow (streams[0], sampleNumbers[i]);
@@ -434,7 +473,9 @@ void NWBFileSource::readEventsTables()
             }
 
             // TTL events: tables are named "<processor>-<id>.<stream>.TTL" (or "TTL_<n>")
-            if (! io->objectExists (path + "/line") || ! io->objectExists (path + "/state"))
+            auto lineColumn = readColumnData (*table, "line");
+            auto stateColumn = readColumnData (*table, "state");
+            if (lineColumn == nullptr || stateColumn == nullptr)
                 continue;
 
             const String tableName (name);
@@ -451,9 +492,9 @@ void NWBFileSource::readEventsTables()
                 continue;
             }
 
-            const auto sampleNumbers = readInt64s (path + "/sample_number");
-            const auto lines = readInt64s (path + "/line");
-            const auto states = readInt64s (path + "/state");
+            const auto sampleNumbers = readValues<int64> (*sampleNumberColumn);
+            const auto lines = readValues<int64> (*lineColumn);
+            const auto states = readValues<int64> (*stateColumn);
             for (size_t i = 0; i < sampleNumbers.size() && i < lines.size() && i < states.size(); i++)
             {
                 const int64 row = getRow (streams[streamIndex], sampleNumbers[i]);
@@ -476,13 +517,20 @@ void NWBFileSource::readLegacyEvents (const std::string& path)
     const String streamName = name.substr (0, name.size() - legacyTTLSuffix.size());
     // The series is named after the event source, e.g. "Network Events-108.example_data.TTL"
     const int index = findStream (streamName);
-    if (index < 0 || ! isDataset (path + "/sync"))
+    if (index < 0)
         return;
 
     try
     {
-        const auto states = readInt64s (path + "/data");
-        const auto sampleNumbers = readInt64s (path + "/sync");
+        auto series = RegisteredType::create<AQNWB::NWB::TimeSeries> (path, io);
+        if (series == nullptr)
+            return;
+        auto sync = series->readField<DatasetField, std::any> ("sync");
+        if (! isDataset (*sync))
+            return;
+
+        const auto states = readValues<int64> (*series->readData<std::any>());
+        const auto sampleNumbers = readValues<int64> (*sync);
         for (size_t i = 0; i < states.size() && i < sampleNumbers.size(); i++)
         {
             const int64 row = getRow (streams[index], sampleNumbers[i]);
@@ -493,6 +541,38 @@ void NWBFileSource::readLegacyEvents (const std::string& path)
     catch (const std::exception& e)
     {
         LOGE ("NWBFileSource: unable to read events from ", path, ": ", e.what());
+    }
+}
+
+void NWBFileSource::readLegacyMessages (const std::string& path)
+{
+    // Earlier versions of the plugin stored text messages as an AnnotationSeries with the sample numbers (of the
+    // main stream) in a "sync" dataset. Files with an EventsTable for the messages use that instead.
+    if (streams.empty() || eventInfoMap.find ("MessageCenter") != eventInfoMap.end())
+        return;
+
+    try
+    {
+        auto series = RegisteredType::create<AQNWB::NWB::AnnotationSeries> (path, io);
+        if (series == nullptr)
+            return;
+        auto data = series->readData<std::any>();
+        auto sync = series->readField<DatasetField, std::any> ("sync");
+        if (! data->exists() || ! isDataset (*sync))
+            return;
+
+        const auto text = readStrings (*data);
+        const auto sampleNumbers = readValues<int64> (*sync);
+        for (size_t i = 0; i < text.size() && i < sampleNumbers.size(); i++)
+        {
+            const int64 row = getRow (streams[0], sampleNumbers[i]);
+            if (row >= 0)
+                addEvent ("MessageCenter", 0, 0, row, String (text[i]));
+        }
+    }
+    catch (const std::exception& e)
+    {
+        LOGE ("NWBFileSource: unable to read ", path, ": ", e.what());
     }
 }
 
@@ -520,12 +600,10 @@ int NWBFileSource::readData (float* buffer, int nSamples)
 
     try
     {
-        const std::string dataPath = stream.path + "/data";
-        const DataBlockGeneric block = stream.numChannels > 1 || io->getStorageObjectShape (dataPath).size() > 1
-                                           ? io->readDataset (dataPath,
-                                                              { static_cast<SizeType> (samplePos), 0 },
-                                                              { static_cast<SizeType> (samplesToRead), static_cast<SizeType> (stream.numChannels) })
-                                           : io->readDataset (dataPath, { static_cast<SizeType> (samplePos) }, { static_cast<SizeType> (samplesToRead) });
+        const DataBlockGeneric block = stream.data2D
+                                           ? stream.data->valuesGeneric ({ static_cast<SizeType> (samplePos), 0 },
+                                                                         { static_cast<SizeType> (samplesToRead), static_cast<SizeType> (stream.numChannels) })
+                                           : stream.data->valuesGeneric ({ static_cast<SizeType> (samplePos) }, { static_cast<SizeType> (samplesToRead) });
         const auto values = convertValues<float> (block);
 
         for (int64 i = 0; i < samplesToRead * stream.numChannels; i++)
@@ -536,7 +614,7 @@ int NWBFileSource::readData (float* buffer, int nSamples)
     }
     catch (const std::exception& e)
     {
-        LOGE ("NWBFileSource: reading data from ", stream.path, " failed: ", e.what());
+        LOGE ("NWBFileSource: reading data from ", stream.series->getPath(), " failed: ", e.what());
         return 0;
     }
 }
