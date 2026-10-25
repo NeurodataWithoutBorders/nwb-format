@@ -387,7 +387,8 @@ int NWBFileSource::findStream (const String& sourceAndStream) const
         if (infoArray[s].name == sourceAndStream)
             return s;
     }
-    auto getStreamPart = [] (const String& name) { return name.fromFirstOccurrenceOf (".", false, false); };
+    auto getStreamPart = [] (const String& name)
+    { return name.fromFirstOccurrenceOf (".", false, false); };
     int index = -1;
     int matches = 0;
     for (int s = 0; s < numRecords; s++)

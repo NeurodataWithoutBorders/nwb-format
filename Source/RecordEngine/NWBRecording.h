@@ -110,11 +110,11 @@ private:
 
     /** Create an EventsTable with a float64 timestamp column, the optional annotation column, and custom columns */
     std::shared_ptr<AQNWB::NWB::EventsTable> createEventsTable (const std::string& name,
-                                                               const std::string& description,
-                                                               const std::string& sourceDescription,
-                                                               float timestampResolution,
-                                                               bool annotationColumn,
-                                                               const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns);
+                                                                const std::string& description,
+                                                                const std::string& sourceDescription,
+                                                                float timestampResolution,
+                                                                bool annotationColumn,
+                                                                const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns);
 
     /** Write the pending sync messages whose stream start time is known. If force is true, the remaining
         messages are written with the start time of the recording as timestamp. */

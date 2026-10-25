@@ -458,11 +458,11 @@ bool NWBRecordEngine::createEpochsTable()
 }
 
 std::shared_ptr<AQNWB::NWB::EventsTable> NWBRecordEngine::createEventsTable (const std::string& name,
-                                                                            const std::string& description,
-                                                                            const std::string& sourceDescription,
-                                                                            float timestampResolution,
-                                                                            bool annotationColumn,
-                                                                            const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns)
+                                                                             const std::string& description,
+                                                                             const std::string& sourceDescription,
+                                                                             float timestampResolution,
+                                                                             bool annotationColumn,
+                                                                             const std::vector<AQNWB::NWB::DynamicTable::DataSpecPtr>& customColumns)
 {
     // Use a float64 timestamp column, since float32 is not precise enough for long recordings
     auto specs = AQNWB::NWB::EventsTable::createDefaultDataSpecs (timestampResolution, false, std::nullopt, annotationColumn, 100);
@@ -832,8 +832,7 @@ void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
     const SizeType numSamplesPerChannel = static_cast<SizeType> (spikeChannel->getTotalSamples());
     const SizeType numChannels = static_cast<SizeType> (spikeChannel->getNumChannels());
 
-    convertToInt16 (spike->getDataPointer(), static_cast<int> (numSamplesPerChannel * numChannels),
-                    spikeChannel->getChannelBitVolts (0), scaledBuffer, intBuffer);
+    convertToInt16 (spike->getDataPointer(), static_cast<int> (numSamplesPerChannel * numChannels), spikeChannel->getChannelBitVolts (0), scaledBuffer, intBuffer);
 
     double timestamp = spike->getTimestampInSeconds();
 
