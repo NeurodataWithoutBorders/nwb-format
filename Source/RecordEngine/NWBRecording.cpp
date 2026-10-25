@@ -287,15 +287,19 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
         { "Open Ephys NWB Format plugin", pluginVersion }
     };
 
+    // Initialize the NWB file with the session metadata and subject information
+    // The session_start_time and timestamps_reference_time are set to the
+    // current time by default and are overwritten when the recording starts.
     bool success = checkStatus (nwbfile->initialize (identifier.toStdString(),
                                                      metadata.sessionDescription,
                                                      dataCollection,
-                                                     "",
-                                                     "",
+                                                     "", // session_start_time
+                                                     "", // timestamps_reference_time
                                                      metadata.subject,
                                                      metadata.general),
                                 "NWBFile initialization");
 
+    // Create the ElectrodesTable
     if (success)
     {
         auto electrodesTable = nwbfile->createElectrodesTable (electrodeArrays);
@@ -310,6 +314,8 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
         }
     }
 
+    // Create the ElectricalSeries for continuous data. This call may create
+    // multiple ElectricalSeries creating one series per recorded stream.
     success = success
               && checkStatus (nwbfile->createElectricalSeries (recordingArrays, recordingArraysNames, AQNWB::IO::BaseDataType::I16, esContainerIndexes),
                               "ElectricalSeries creation");
@@ -349,8 +355,11 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
         spikeSampleNumbersWritten.push_back (0);
     }
 
-    success = success && createEpochsTable() && createEventsTables();
+    // Create the epochs table and the events tables before starting the recording
+    success = success && createEpochsTable();
+    success = success && createEventsTables();
 
+    // Start the recording in the NWB file
     success = success && checkStatus (io->startRecording(), "Start recording");
     lastFlushTime = Time::getMillisecondCounter();
 
