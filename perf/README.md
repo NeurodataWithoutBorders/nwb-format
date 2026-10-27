@@ -35,33 +35,42 @@ Environment variables (see `paths.py` and `setup_release.sh`): `GUI_BASE_DIR` (d
   `sample` profiler for 10 s. Reports the share of the GUI's Record Thread spent in the engine's continuous writes
   (`writeContinuousData`/`writeContinuousDataBatch` and everything they call) and how busy the processing (audio)
   thread is. Results: `results/profile.jsonl`, call trees in `$PERF_WORK/profiles` (compressed copies in
-  `results/profiles`); `python3 perf/breakdown.py <profile>` breaks down the Record Thread time.
+  `results/profiles`); `python3 perf/breakdown.py <profile>` breaks down the Record Thread time. Samples in which
+  `sample` couldn't unwind the stack through the engine function (reported as `???` directly inside
+  `RecordThread::writeData`, e.g. for the Binary engine's SIMD conversion) are counted as engine writes as well;
+  `--reanalyze <results.jsonl>` recomputes stored results from their profiles.
 
 The process CPU time is not useful to compare the engines: the Record Thread polls its data queues without waiting
 (`RecordThread::run` calls `writeData` in a loop), so it uses a full core during any recording.
 
 ## Results (2026-10-21)
 
+**Correction (2026-10-27):** the Binary numbers first published here (0.7/3.3/7.2/10.3% at 384/1536/3072/4608
+channels) were too low. For the samples in the Binary engine's float to int16 conversion (`SIMDConverter`), `sample`
+reports the caller as `???` directly inside `RecordThread::writeData`, so they weren't counted as engine writes. The
+analysis now counts these samples too (about 40% of Binary's write time); the NWB2 numbers are unchanged (no such
+samples).
+
 Apple M4 (10 cores, 32 GB RAM), internal SSD, macOS 15.7.2, Open Ephys GUI v1.1.0 (main) and the plugin (branch
 `add-aqnwb-v0.4` at 21e67fd, AqNWB 71e34af1) in Release mode, HDF5 1.14.3. 3 runs of 30 s per data point.
 
 | Channels | Data rate | Binary: data written | NWB2: data written | Binary: Record Thread busy writing | NWB2: Record Thread busy writing |
 |---:|---:|---|---|---:|---:|
-| 384 | 23 MB/s | 100% | 100% | 0.7% | 8.9% |
-| 1536 | 92 MB/s | 100% | 100% | 3.3% | 34.5% |
-| 3072 | 184 MB/s | 98.6-99.4% | 99.3-99.8% | 7.2% | 70.5% |
-| 4608 | 276 MB/s | 45-48% | 44-45% | 10.3% | 80.6% |
+| 384 | 23 MB/s | 100% | 100% | 1.1% | 8.9% |
+| 1536 | 92 MB/s | 100% | 100% | 5.8% | 34.5% |
+| 3072 | 184 MB/s | 98.6-99.4% | 99.3-99.8% | 13.2% | 70.5% |
+| 4608 | 276 MB/s | 45-48% | 44-45% | 18.0% | 80.6% |
 | 6144 | 369 MB/s | 39-40% | 37-38% | | |
 
-- Both engines keep up with up to 3072 channels at 30 kHz (184 MB/s): the recordings were never stopped and contain 100% (384 and 1536 channels) and 98.6-99.8% (3072 channels) of the samples, with the same file sizes. The small shortfall at 3072 channels is most likely the test source: the data is contiguous (no gaps apart from the loop points), Binary loses the most although it uses only 7% of the Record Thread, and recording 4 of the 3072 channels yields 100% (`results/check_3072.jsonl`), i.e. presumably the File Reader slowing down slightly when the writes evict the dataset from the page cache (as at 4608 channels). Part of it may be the samples discarded at the end of a recording (the Record Thread writes at most 4096 samples after stopping, https://github.com/open-ephys/plugin-GUI/issues/713).
+- Both engines keep up with up to 3072 channels at 30 kHz (184 MB/s): the recordings were never stopped and contain 100% (384 and 1536 channels) and 98.6-99.8% (3072 channels) of the samples, with the same file sizes. The small shortfall at 3072 channels is most likely the test source: the data is contiguous (no gaps apart from the loop points), Binary loses the most although it uses only 13% of the Record Thread, and recording 4 of the 3072 channels yields 100% (`results/check_3072.jsonl`), i.e. presumably the File Reader slowing down slightly when the writes evict the dataset from the page cache (as at 4608 channels). Part of it may be the samples discarded at the end of a recording (the Record Thread writes at most 4096 samples after stopping, https://github.com/open-ephys/plugin-GUI/issues/713).
 - At 4608 and 6144 channels, the File Reader can't keep up while recording (the processing thread is ~70% busy, mostly
   in `FileReader::process`; the data is contiguous but the signal chain runs at ~45% of real time, so the record buffer
   never fills). Recording only 4 of the 4608 channels keeps up, so this is presumably the File Reader re-reading the
   dataset from the SSD because the writes evict it from the page cache: a limit of the test setup, not of the engines.
-- NWB2 needs ~10x more Record Thread time than Binary per MB. At 3072 channels: 55% in the per-channel HDF5 writes
+- NWB2 needs ~5-8x more Record Thread time than Binary per MB. At 3072 channels: 55% in the per-channel HDF5 writes
   (`ElectricalSeries::writeChannel`: `H5Dwrite`, copying the strided channel column into the chunks, hyperslab
-  selection) and 14% in the per-channel float to int16 conversion (Binary: 6%, converting whole blocks with batch
-  writes). Extrapolated, NWB2 would reach 100% at ~260 MB/s (~4300 channels at 30 kHz) per Record Node.
+  selection) and 14% in the per-channel float to int16 conversion (Binary: 6% in `SIMDConverter`, 2.8% interleaving
+  and 4.2% file writes, with batch writes). Extrapolated, NWB2 would reach 100% at ~260 MB/s (~4300 channels at 30 kHz) per Record Node.
 - The GUI only uses batch writes (`writeContinuousDataBatch`) for the Binary engine
   (https://github.com/open-ephys/plugin-GUI/issues/711), so the NWB2 engine receives each block one channel at a time.
 
@@ -79,10 +88,10 @@ Three versions (Record Thread busy writing, same setup as above; `results/profil
 
 | Channels | Data rate | Per-channel writes | v1: one write per block | v2: + vectorized conversion, tiled interleave | v3: + faster int16 conversion | Binary |
 |---:|---:|---:|---:|---:|---:|---:|
-| 384 | 23 MB/s | 8.9% | 2.2% | 3.1% | 2.3% | 0.7% |
-| 1536 | 92 MB/s | 34.5% | 12.7% | 12.6% | 7.9% | 3.3% |
-| 3072 | 184 MB/s | 70.5% | 27.6% | 23.1% | 16.2% | 7.2% |
-| 4608 | 276 MB/s | 80.6% | 29.9% | 28.2% | 19.7% | 10.3% |
+| 384 | 23 MB/s | 8.9% | 2.2% | 3.1% | 2.3% | 1.1% |
+| 1536 | 92 MB/s | 34.5% | 12.7% | 12.6% | 7.9% | 5.8% |
+| 3072 | 184 MB/s | 70.5% | 27.6% | 23.1% | 16.2% | 13.2% |
+| 4608 | 276 MB/s | 80.6% | 29.9% | 28.2% | 19.7% | 18.0% |
 
 - v1: convert each channel straight into its column of the interleaved block (scalar, strided writes).
 - v2: convert each channel with the existing JUCE conversion into a channel-major buffer, then interleave the block in
@@ -93,8 +102,8 @@ Three versions (Record Thread busy writing, same setup as above; `results/profil
   out-of-range values.
 - The recorded data is bit-identical to the source dataset (all 115 million values of a 10 s, 384-channel recording).
   With v3, the recordings contain the same share of samples as the other variants (see the comparison below).
-- With v3, the HDF5 write itself takes ~3% of the Record Thread at 3072 channels; NWB2 needs ~2.3x the Record Thread
-  time of Binary (was ~10x). Extrapolated, a Record Node could write ~1 GB/s of NWB2 data on this machine (if the source
+- With v3, the HDF5 write itself takes ~3% of the Record Thread at 3072 channels; NWB2 needs ~1.2x the Record Thread
+  time of Binary (was ~5x). Extrapolated, a Record Node could write ~1 GB/s of NWB2 data on this machine (if the source
   keeps up). At 4608 channels the data rate is still limited by the File Reader (see above).
 
 ## Comparison: NWB2 (PR), NWB2 with block writes (v3 prototype), Binary
@@ -103,15 +112,15 @@ NWB2 (PR): branch `add-aqnwb-v0.4` at 21e67fd; NWB2 (v3): this branch. Release b
 
 Record Thread time spent in the engine's continuous data writes (share of the 1 ms samples of the `sample` profiler in
 which the Record Thread is in `writeContinuousData`/`writeContinuousDataBatch`, including conversion, HDF5/file writes
-and flushes; the thread never sleeps, so this is the share of real time spent writing, and 100% means the engine can't
+and flushes, and the unresolved engine frames described above; the thread never sleeps, so this is the share of real time spent writing, and 100% means the engine can't
 keep up):
 
 | Channels | Data rate | NWB2 (PR) | NWB2 (v3) | Binary |
 |---:|---:|---:|---:|---:|
-| 384 | 23 MB/s | 8.9% | 2.3% | 0.7% |
-| 1536 | 92 MB/s | 34.5% | 7.9% | 3.3% |
-| 3072 | 184 MB/s | 70.5% | 16.2% | 7.2% |
-| 4608 | 276 MB/s* | 80.6% | 19.7% | 10.3% |
+| 384 | 23 MB/s | 8.9% | 2.3% | 1.1% |
+| 1536 | 92 MB/s | 34.5% | 7.9% | 5.8% |
+| 3072 | 184 MB/s | 70.5% | 16.2% | 13.2% |
+| 4608 | 276 MB/s* | 80.6% | 19.7% | 18.0% |
 
 Samples written in 30 s recordings (range over 3 runs; the recording was never stopped by the GUI):
 
@@ -134,8 +143,8 @@ Record Thread busy writing (Release, same setup as above; `results/profile_batch
 
 | Channels | Data rate | NWB2, one write per channel (branch, unmodified GUI) | NWB2, writeContinuousDataBatch | Binary |
 |---:|---:|---:|---:|---:|
-| 384 | 23 MB/s | 8.6% | 3.1% | 0.7% |
-| 1536 | 92 MB/s | 35.0% | 12.9% | 3.3% |
-| 3072 | 184 MB/s | 71.8% | 23.8% | 7.2% |
+| 384 | 23 MB/s | 8.6% | 3.1% | 1.1% |
+| 1536 | 92 MB/s | 35.0% | 12.9% | 5.8% |
+| 3072 | 184 MB/s | 71.8% | 23.8% | 13.2% |
 
-The per-channel path of the branch matches `add-aqnwb-v0.4` (8.9/34.5/70.5%). The faster int16 conversion (v3) would lower the batch path further (16.2% at 3072 channels in the prototype); it is independent of #711.
+The per-channel path of the branch matches `add-aqnwb-v0.4` (8.9/34.5/70.5%). At 3072 channels, the batch path spends 15.8% in the JUCE float to int16 conversion (`copyWithMultiply` + `convertFloatToInt16LE`), 3.6% in the HDF5 write of data and timestamps, and the rest in interleaving and sample numbers. The conversion is independent of #711: the vectorizable loop of the v3 prototype lowered the batch path to 16.2%; the GUI's `SIMDConverter`, which takes 6.0% of the Record Thread in the Binary profile for the same data, would presumably lower it to ~14%, i.e. about Binary's 13.2% (an estimate, not measured: `SIMDConverter` is not available to plugins).

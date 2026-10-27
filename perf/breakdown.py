@@ -16,6 +16,8 @@ PARTS = {
     "    hyperslab selection": r"H5S_select_hyperslab|H5Sselect_hyperslab|H5S__hyper",
     "    chunk lookup/cache": r"H5D__chunk_lookup|H5D__chunk_lock|H5D__chunk_unlock",
     "  float -> int16 conversion": r"transformToInt16|convertFloatToInt16|FloatVectorOperations",
+    "  interleave": r"interleaveInt16",
+    "  Binary file writes": r"SequentialBlockFile::writeChannel",
     "polling the data queues (DataQueue::startRead)": r"DataQueue::startRead",
 }
 
@@ -46,10 +48,35 @@ def outermost_count(lines, pattern):
     return count
 
 
+def unresolved_count(lines, parent_pattern):
+    """Samples in unresolved frames (`???`) directly inside a frame matching parent_pattern: `sample` couldn't unwind
+    through the engine function (e.g. the Binary engine's SIMDConverter), so its code appears below `???` in
+    RecordThread::writeData instead of below writeContinuousData[Batch] (see profile_record_thread.py)"""
+    count, stack = 0, []
+    for line in lines:
+        lm = LINE.match(line)
+        if not lm:
+            continue
+        depth, name = len(lm.group("indent")), lm.group("name")
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        if name.startswith("???") and stack and re.search(parent_pattern, stack[-1][1]):
+            count += int(lm.group("count"))
+        stack.append((depth, name))
+    return count
+
+
 for path in sys.argv[1:]:
     total, lines = thread_block(read(path), "Record Thread")
+    unresolved = unresolved_count(lines, r"RecordThread::writeData\b")
     print(f"{Path(path).name}: {total} Record Thread samples")
     for label, pattern in PARTS.items():
         c = outermost_count(lines, pattern)
+        if label.startswith("engine writes"):
+            c += unresolved
+            if unresolved:
+                print(f"  {label}, incl. unresolved frames: {100 * c / total:.1f}%")
+                print(f"    of which unresolved frames in RecordThread::writeData: {100 * unresolved / total:.1f}%")
+                continue
         if c:
             print(f"  {label}: {100 * c / total:.1f}%")
