@@ -125,3 +125,17 @@ Samples written in 30 s recordings (range over 3 runs; the recording was never s
 
 \* Above 3072 channels, the File Reader can't keep up while recording (see above), so these rows show the limit of
 the test source, not of the engines.
+
+## writeContinuousDataBatch (branch `batch-writes`, 2026-10-26)
+
+The branch `batch-writes` (on top of `add-aqnwb-v0.4`) implements `RecordEngine::writeContinuousDataBatch`, which the GUI calls with all recorded channels of a stream for each block: the plugin converts the channels with the existing JUCE conversion, interleaves them in 64 x 64 tiles and writes the block with one `writeAllChannels` call (as the v2 prototype above, but without collecting the per-channel calls). The GUI uses batch writes only for the Binary engine (https://github.com/open-ephys/plugin-GUI/issues/711), so the test used a local GUI change that also enables them for NWB2 if the environment variable `OE_NWB2_BATCH_WRITES` is set (`RecordThread::setEngine`, `RecordThread.cpp`).
+
+Record Thread busy writing (Release, same setup as above; `results/profile_batch_api.jsonl`, `results/profile_batch_branch_perchannel.jsonl`):
+
+| Channels | Data rate | NWB2, one write per channel (branch, unmodified GUI) | NWB2, writeContinuousDataBatch | Binary |
+|---:|---:|---:|---:|---:|
+| 384 | 23 MB/s | 8.6% | 3.1% | 0.7% |
+| 1536 | 92 MB/s | 35.0% | 12.9% | 3.3% |
+| 3072 | 184 MB/s | 71.8% | 23.8% | 7.2% |
+
+The per-channel path of the branch matches `add-aqnwb-v0.4` (8.9/34.5/70.5%). The faster int16 conversion (v3) would lower the batch path further (16.2% at 3072 channels in the prototype); it is independent of #711.
