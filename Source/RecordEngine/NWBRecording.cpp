@@ -191,17 +191,45 @@ std::string getStreamName (const ContinuousChannel* channel)
            + "." + channel->getStreamName().toStdString();
 }
 
+/** Scale float samples (in units of bitVolts) and convert them to int16 (out must hold numSamples values) */
+void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vector<float>& scaled, int16_t* out)
+{
+    if (scaled.size() < (size_t) numSamples)
+        scaled.resize (numSamples);
+
+    FloatVectorOperations::copyWithMultiply (scaled.data(), data, 1.0f / (float (0x7fff) * bitVolts), numSamples);
+    AudioDataConverters::convertFloatToInt16LE (scaled.data(), out, numSamples);
+}
+
 /** Scale float samples (in units of bitVolts) and convert them to int16 */
 void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vector<float>& scaled, std::vector<int16_t>& out)
 {
-    if (scaled.size() < (size_t) numSamples)
-    {
-        scaled.resize (numSamples);
+    if (out.size() < (size_t) numSamples)
         out.resize (numSamples);
-    }
+    convertToInt16 (data, numSamples, bitVolts, scaled, out.data());
+}
 
-    FloatVectorOperations::copyWithMultiply (scaled.data(), data, 1.0f / (float (0x7fff) * bitVolts), numSamples);
-    AudioDataConverters::convertFloatToInt16LE (scaled.data(), out.data(), numSamples);
+/** Interleave a block stored channel by channel (src[channel * numSamples + sample]) into the [sample][channel]
+    layout of the ElectricalSeries data (dst[sample * numChannels + channel]). The block is copied in tiles of
+    64 x 64 values, so that reads and writes both stay within a few cache lines. */
+void interleaveInt16 (const int16_t* src, int16_t* dst, size_t numChannels, size_t numSamples)
+{
+    constexpr size_t tileChannels = 64;
+    constexpr size_t tileSamples = 64;
+    for (size_t c0 = 0; c0 < numChannels; c0 += tileChannels)
+    {
+        const size_t c1 = std::min (c0 + tileChannels, numChannels);
+        for (size_t s0 = 0; s0 < numSamples; s0 += tileSamples)
+        {
+            const size_t s1 = std::min (s0 + tileSamples, numSamples);
+            for (size_t sample = s0; sample < s1; sample++)
+            {
+                int16_t* out = dst + sample * numChannels;
+                for (size_t channel = c0; channel < c1; channel++)
+                    out[channel] = src[channel * numSamples + sample];
+            }
+        }
+    }
 }
 } // namespace
 
@@ -775,31 +803,94 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
     /* All channels of a stream share the timestamps and sample numbers, so these are written
        together with the first channel of each ElectricalSeries */
     if (writeChannelLocalIndexes[writeChannel] == 0 && size > 0)
+        status = status && writeBlockSampleNumbers (seriesIndex, getLatestSampleNumber (writeChannel), timestampBuffer, size);
+
+    finishContinuousWrite (status, seriesIndex);
+}
+
+void NWBRecordEngine::writeContinuousDataBatch (const int* writeChannels,
+                                                const int* realChannels,
+                                                const float* const* dataBuffers,
+                                                const double* timestampBuffer,
+                                                int numChannels,
+                                                int numSamples,
+                                                int fileIndex)
+{
+    if (io == nullptr || numChannels <= 0 || numSamples <= 0)
+        return;
+
+    // The GUI passes all recorded channels of a data stream, i.e., all channels of one ElectricalSeries in
+    // channel order. Write any other combination of channels one channel at a time.
+    const auto isValidWriteChannel = [this] (int writeChannel)
+    { return writeChannel >= 0 && (size_t) writeChannel < writeChannelSeriesIndexes.size(); };
+
+    const size_t seriesIndex = isValidWriteChannel (writeChannels[0]) ? writeChannelSeriesIndexes[writeChannels[0]] : 0;
+    bool wholeSeries = isValidWriteChannel (writeChannels[0]) && (size_t) numChannels == recordingArrays[seriesIndex].size();
+    for (int i = 0; wholeSeries && i < numChannels; i++)
     {
-        if (sampleNumberBuffer.size() < (size_t) size)
-            sampleNumberBuffer.resize (size);
-
-        const int64 firstSampleNumber = getLatestSampleNumber (writeChannel);
-        for (int i = 0; i < size; i++)
-            sampleNumberBuffer[i] = firstSampleNumber + i;
-
-        auto& written = esSampleNumbersWritten[seriesIndex];
-        status = status && esSampleNumbers[seriesIndex]->writeDataBlock ({ static_cast<SizeType> (size) }, { written }, AQNWB::IO::BaseDataType::I64, sampleNumberBuffer.data());
-        written += static_cast<SizeType> (size);
-
-        // The epoch of a recording spans from its first to its last recorded timestamp
-        if (! recordingHasData)
-        {
-            recordingStartTime = timestampBuffer[0];
-            recordingHasData = true;
-        }
-        recordingStopTime = timestampBuffer[size - 1];
-
-        // first timestamp of each stream in the recording (for the sync messages)
-        if (streamStartTimes.emplace (recordingStreamIds[seriesIndex], timestampBuffer[0]).second && ! pendingSyncMessages.empty())
-            writeSyncMessages (false);
+        wholeSeries = isValidWriteChannel (writeChannels[i]) && writeChannelSeriesIndexes[writeChannels[i]] == seriesIndex
+                      && writeChannelLocalIndexes[writeChannels[i]] == (size_t) i;
     }
 
+    if (! wholeSeries)
+    {
+        for (int i = 0; i < numChannels; i++)
+            writeContinuousData (writeChannels[i], realChannels[i], dataBuffers[i], timestampBuffer, numSamples);
+        return;
+    }
+
+    // Convert the channels to int16 and interleave them into the [sample][channel] layout of the dataset
+    const size_t blockSize = (size_t) numChannels * (size_t) numSamples;
+    if (channelBlockBuffer.size() < blockSize)
+    {
+        channelBlockBuffer.resize (blockSize);
+        interleavedBlockBuffer.resize (blockSize);
+    }
+    const auto& channels = recordingArrays[seriesIndex];
+    for (int i = 0; i < numChannels; i++)
+        convertToInt16 (dataBuffers[i], numSamples, channels[i].getBitVolts(), scaledBuffer, channelBlockBuffer.data() + (size_t) i * numSamples);
+    interleaveInt16 (channelBlockBuffer.data(), interleavedBlockBuffer.data(), (size_t) numChannels, (size_t) numSamples);
+
+    // Write the data and timestamps of all channels with one HDF5 write
+    Status status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
+                                                          esContainerIndexes[seriesIndex],
+                                                          static_cast<SizeType> (numSamples),
+                                                          interleavedBlockBuffer.data(),
+                                                          timestampBuffer);
+    status = status && writeBlockSampleNumbers (seriesIndex, getLatestSampleNumber (writeChannels[0]), timestampBuffer, numSamples);
+
+    finishContinuousWrite (status, seriesIndex);
+}
+
+Status NWBRecordEngine::writeBlockSampleNumbers (size_t seriesIndex, int64 firstSampleNumber, const double* timestampBuffer, int size)
+{
+    if (sampleNumberBuffer.size() < (size_t) size)
+        sampleNumberBuffer.resize (size);
+
+    for (int i = 0; i < size; i++)
+        sampleNumberBuffer[i] = firstSampleNumber + i;
+
+    auto& written = esSampleNumbersWritten[seriesIndex];
+    const Status status = esSampleNumbers[seriesIndex]->writeDataBlock ({ static_cast<SizeType> (size) }, { written }, AQNWB::IO::BaseDataType::I64, sampleNumberBuffer.data());
+    written += static_cast<SizeType> (size);
+
+    // The epoch of a recording spans from its first to its last recorded timestamp
+    if (! recordingHasData)
+    {
+        recordingStartTime = timestampBuffer[0];
+        recordingHasData = true;
+    }
+    recordingStopTime = timestampBuffer[size - 1];
+
+    // first timestamp of each stream in the recording (for the sync messages)
+    if (streamStartTimes.emplace (recordingStreamIds[seriesIndex], timestampBuffer[0]).second && ! pendingSyncMessages.empty())
+        writeSyncMessages (false);
+
+    return status;
+}
+
+void NWBRecordEngine::finishContinuousWrite (Status status, size_t seriesIndex)
+{
     if (status != Status::Success && ! writeErrorLogged)
     {
         LOGE ("NWB2: Writing continuous data for ", recordingArraysNames[seriesIndex], " failed");
