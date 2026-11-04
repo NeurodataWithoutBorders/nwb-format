@@ -28,6 +28,8 @@
 #include <set>
 #include <string>
 
+#include <H5Cpp.h>
+
 #include "NWBRecording.h"
 #include "Utils.hpp"
 #include "io/hdf5/HDF5IO.hpp"
@@ -280,9 +282,22 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
     const SizeType chunkBytes = 2048 * maxChannels * sizeof (int16_t);
     const SizeType cacheBytes = std::max<SizeType> (AQNWB::IO::HDF5::HDF5IO::getDefaultChunkCacheNumBytes(), 4 * chunkBytes);
     auto hdf5io = std::dynamic_pointer_cast<AQNWB::IO::HDF5::HDF5IO> (io);
-    const Status openStatus = hdf5io != nullptr
-                                  ? hdf5io->open (AQNWB::IO::FileMode::Overwrite, AQNWB::IO::HDF5::ChunkCacheConfig { cacheBytes })
-                                  : io->open (AQNWB::IO::FileMode::Overwrite);
+    Status openStatus = Status::Failure;
+    try
+    {
+        openStatus = hdf5io != nullptr
+                         ? hdf5io->open (AQNWB::IO::FileMode::Overwrite, AQNWB::IO::HDF5::ChunkCacheConfig { cacheBytes })
+                         : io->open (AQNWB::IO::FileMode::Overwrite);
+    }
+    // Opening can throw, e.g., if the directory is not writable. HDF5 exceptions do not derive from std::exception.
+    catch (const std::exception& e)
+    {
+        LOGE ("NWB2: Opening ", filename, " failed: ", e.what());
+    }
+    catch (const H5::Exception& e)
+    {
+        LOGE ("NWB2: Opening ", filename, " failed: ", e.getDetailMsg());
+    }
 
     if (! checkStatus (openStatus, "Opening " + filename))
     {
@@ -787,13 +802,7 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
         status = status && esSampleNumbers[seriesIndex]->writeDataBlock ({ static_cast<SizeType> (size) }, { written }, AQNWB::IO::BaseDataType::I64, sampleNumberBuffer.data());
         written += static_cast<SizeType> (size);
 
-        // The epoch of a recording spans from its first to its last recorded timestamp
-        if (! recordingHasData)
-        {
-            recordingStartTime = timestampBuffer[0];
-            recordingHasData = true;
-        }
-        recordingStopTime = timestampBuffer[size - 1];
+        dataWritten (timestampBuffer[0], timestampBuffer[size - 1]);
 
         // first timestamp of each stream in the recording (for the sync messages)
         if (streamStartTimes.emplace (recordingStreamIds[seriesIndex], timestampBuffer[0]).second && ! pendingSyncMessages.empty())
@@ -805,6 +814,24 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
         LOGE ("NWB2: Writing continuous data for ", recordingArraysNames[seriesIndex], " failed");
         writeErrorLogged = true;
     }
+}
+
+void NWBRecordEngine::dataWritten (double firstTimestamp, double lastTimestamp)
+{
+    // The epoch of a recording spans from its first to its last recorded timestamp. The callbacks of different
+    // streams, events and spikes are not in timestamp order, so keep the minimum start and maximum stop.
+    if (! recordingHasData)
+    {
+        recordingStartTime = firstTimestamp;
+        recordingStopTime = lastTimestamp;
+        recordingHasData = true;
+    }
+    else
+    {
+        recordingStartTime = std::min (recordingStartTime, firstTimestamp);
+        recordingStopTime = std::max (recordingStopTime, lastTimestamp);
+    }
+
     // Flush periodically so that the data written so far is not lost if the GUI crashes
     const uint32 now = Time::getMillisecondCounter();
     if (now - lastFlushTime >= flushIntervalMs)
@@ -855,6 +882,7 @@ void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
         LOGE ("NWB2: Writing event to ", eventTable.name, " failed");
         eventErrorLogged = true;
     }
+    dataWritten (eventStruct->getTimestampInSeconds(), eventStruct->getTimestampInSeconds());
 }
 
 void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 sampleNumber, float sourceSampleRate, String text)
@@ -897,6 +925,7 @@ void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
         LOGE ("NWB2: Writing spike data for ", spikeRecordingArraysNames[electrodeIndex], " failed");
         writeErrorLogged = true;
     }
+    dataWritten (timestamp, timestamp);
 
     // TODO - save spike metadata
 }

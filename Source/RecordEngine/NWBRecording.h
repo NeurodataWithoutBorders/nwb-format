@@ -120,6 +120,11 @@ private:
         from the 'Software Time' sync message (system time in ms) and the first timestamp of the recording */
     void setReferenceTime (int64 softwareTimeMs, double firstTimestamp);
 
+    /** Extend the time range of the current recording (for its epoch) to the timestamps of written data, and
+        flush the file periodically. Called for continuous data, events and spikes, so that recordings without
+        continuous channels get an epoch and are flushed too. */
+    void dataWritten (double firstTimestamp, double lastTimestamp);
+
     /** Log a failed AqNWB operation. Returns true if the status indicates success. */
     static bool checkStatus (AQNWB::Types::Status status, const String& operation);
 

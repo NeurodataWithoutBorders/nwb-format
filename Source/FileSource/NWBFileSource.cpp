@@ -27,6 +27,8 @@
 #include <cmath>
 #include <map>
 
+#include <H5Cpp.h>
+
 #include "Utils.hpp"
 #include "nwb/base/TimeSeries.hpp"
 #include "nwb/event/EventsTable.hpp"
@@ -170,6 +172,13 @@ bool NWBFileSource::open (File file)
     catch (const std::exception& e)
     {
         LOGE ("NWBFileSource: unable to open ", file.getFullPathName(), ": ", e.what());
+        io.reset();
+        return false;
+    }
+    // HDF5 exceptions (e.g., for a file that is not an HDF5 file) do not derive from std::exception
+    catch (const H5::Exception& e)
+    {
+        LOGE ("NWBFileSource: unable to open ", file.getFullPathName(), ": ", e.getDetailMsg());
         io.reset();
         return false;
     }
@@ -489,14 +498,36 @@ void NWBFileSource::readEventsTables()
                 continue;
             }
 
+            const String tableName (name);
+            const String eventType = tableName.fromLastOccurrenceOf (".", false, false);
+
+            // Text events of other processors: tables are named "<processor>-<id>.<stream>.TEXT" (or "TEXT_<n>"),
+            // and their sample numbers refer to that stream
+            if ((eventType == "TEXT" || eventType.startsWith ("TEXT_")) && annotationColumn != nullptr)
+            {
+                const int streamIndex = findStream (tableName.upToLastOccurrenceOf (".", false, false));
+                if (streamIndex < 0)
+                {
+                    LOGD ("NWBFileSource: no data stream found for ", path, "; its events are not loaded");
+                    continue;
+                }
+                const auto sampleNumbers = readValues<int64> (*sampleNumberColumn);
+                const auto text = readStrings (*annotationColumn->readData());
+                for (size_t i = 0; i < sampleNumbers.size() && i < text.size(); i++)
+                {
+                    const int64 row = getRow (streams[streamIndex], sampleNumbers[i]);
+                    if (row >= 0)
+                        addEvent (infoArray[streamIndex].name, 0, 0, row, String (text[i]));
+                }
+                continue;
+            }
+
             // TTL events: tables are named "<processor>-<id>.<stream>.TTL" (or "TTL_<n>")
             auto lineColumn = readColumnData (*table, "line");
             auto stateColumn = readColumnData (*table, "state");
             if (lineColumn == nullptr || stateColumn == nullptr)
                 continue;
 
-            const String tableName (name);
-            const String eventType = tableName.fromLastOccurrenceOf (".", false, false);
             if (! (eventType == "TTL" || eventType.startsWith ("TTL_")))
             {
                 LOGD ("NWBFileSource: ", path, " is not a TTL events table; its events are not loaded");
