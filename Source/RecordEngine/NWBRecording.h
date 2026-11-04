@@ -71,6 +71,16 @@ public:
                               const double* timestampBuffer,
                               int size) override;
 
+    /** Write continuous data for all recorded channels of a data stream (one ElectricalSeries) with a single
+        HDF5 write. Called by the GUI instead of writeContinuousData if it uses batch writes for the engine. */
+    void writeContinuousDataBatch (const int* writeChannels,
+                                   const int* realChannels,
+                                   const float* const* dataBuffers,
+                                   const double* timestampBuffer,
+                                   int numChannels,
+                                   int numSamples,
+                                   int fileIndex) override;
+
     /** Write a single event to disk (TTL or TEXT) */
     void writeEvent (int eventIndex, const MidiMessage& event) override;
 
@@ -122,6 +132,13 @@ private:
 
     /** Log a failed AqNWB operation. Returns true if the status indicates success. */
     static bool checkStatus (AQNWB::Types::Status status, const String& operation);
+
+    /** Write the sample numbers of a block of an ElectricalSeries and update the time range of the recording and
+        the start time of the stream (once per block and series) */
+    AQNWB::Types::Status writeBlockSampleNumbers (size_t seriesIndex, int64 firstSampleNumber, const double* timestampBuffer, int size);
+
+    /** Log a failed continuous data write (once per file) and flush the file periodically */
+    void finishContinuousWrite (AQNWB::Types::Status status, size_t seriesIndex);
 
     /** NWB I/O object */
     std::shared_ptr<AQNWB::IO::BaseIO> io;
@@ -229,6 +246,10 @@ private:
     std::vector<float> scaledBuffer;
     std::vector<int16_t> intBuffer;
     std::vector<int64> sampleNumberBuffer;
+
+    /** Reusable buffers for batch writes: int16 samples channel by channel, and interleaved [sample][channel] */
+    std::vector<int16_t> channelBlockBuffer;
+    std::vector<int16_t> interleavedBlockBuffer;
 
     /** Set after the first failed data write so that errors are only logged once per file */
     bool writeErrorLogged = false;
