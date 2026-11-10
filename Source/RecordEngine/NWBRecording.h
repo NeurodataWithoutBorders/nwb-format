@@ -268,7 +268,7 @@ private:
     /** The identifier for the current file (can be set externally) */
     String identifierText;
 
-    /** Session and subject metadata set in the Record Node's NWB2 options, by engine parameter ID */
+    /** Session and subject metadata and the metadata file set in the Record Node's NWB2 options, by engine parameter ID */
     std::map<int, String> metadataParameterValues;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NWBRecordEngine);
