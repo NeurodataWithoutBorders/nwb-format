@@ -820,13 +820,15 @@ void NWBRecordEngine::dataWritten (double firstTimestamp, double lastTimestamp)
 {
     // The epoch of a recording spans from its first to its last recorded timestamp. The callbacks of different
     // streams, events and spikes are not in timestamp order, so keep the minimum start and maximum stop.
-    if (! recordingHasData)
+    // Streams that are not synchronized have timestamps of -1; they don't contribute to the epoch.
+    const bool synchronized = firstTimestamp >= 0 && lastTimestamp >= 0;
+    if (synchronized && ! recordingHasData)
     {
         recordingStartTime = firstTimestamp;
         recordingStopTime = lastTimestamp;
         recordingHasData = true;
     }
-    else
+    else if (synchronized)
     {
         recordingStartTime = std::min (recordingStartTime, firstTimestamp);
         recordingStopTime = std::max (recordingStopTime, lastTimestamp);
