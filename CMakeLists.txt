@@ -126,9 +126,11 @@ include_directories(${HDF5_INCLUDE_DIRS})
 target_link_libraries(${PLUGIN_NAME} ${HDF5_LIBRARIES} ${HDF5_CXX_LIBRARIES})
 target_include_directories(${PLUGIN_NAME} PRIVATE ${HDF5_INCLUDE_DIRS})
 
-#target_include_directories(${PLUGIN_NAME} PUBLIC ../OpenEphysHDF5Lib/Source)
-
-
-# Open Ephys common libraries
-include(link_open_ephys_lib.cmake)
-link_open_ephys_lib(${PLUGIN_NAME} OpenEphysHDF5)
+#copy the dependencies when installing
+if (MSVC)
+	install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs/windows/bin/ DESTINATION ${GUI_BIN_DIR}/shared CONFIGURATIONS ${CMAKE_CONFIGURATION_TYPES})
+elseif(LINUX)
+	install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs/linux/bin/ DESTINATION ${GUI_BIN_DIR}/shared)
+elseif(APPLE)
+	install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs/macos/bin/ DESTINATION $ENV{HOME}/Library/Application\ Support/open-ephys/shared-api10)
+endif()

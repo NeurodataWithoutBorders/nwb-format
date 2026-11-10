@@ -28,24 +28,12 @@ jobs:
         git clone https://github.com/open-ephys/plugin-GUI.git --branch main --single-branch --depth 1
         cd plugin-GUI/Build
         cmake -G "Visual Studio 17 2022" -A x64 ..
-        # Build the GUI to get an import library (open-ephys.lib) that matches the headers: the published
-        # open-ephys-lib-v1.0.0.zip lacks symbols added in v1.1.0 (e.g., RecordEngine::writeContinuousDataBatch)
-        cmake --build . --config Release --target open-ephys --parallel
-      shell: bash
-    - name: config-hdf5lib
-      run: |
-        cd ../..
-        mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysHDF5Lib.git --branch main
-        cd OpenEphysHDF5Lib/Build
-        cmake -G "Visual Studio 17 2022" -A x64 ..
+        mkdir Release && cd Release
+        curl -L https://openephys.jfrog.io/artifactory/GUI-binaries/Libraries/open-ephys-lib-v1.1.0.zip --output open-ephys-lib.zip
+        unzip open-ephys-lib.zip
       shell: bash
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@v2
-    - name: build-hdf5lib
-      run: |
-        msbuild ../../OEPlugins/OpenEphysHDF5Lib/Build/INSTALL.vcxproj -p:Configuration=Release -p:Platform=x64
-      shell: cmd
     - name: configure
       run: |
         cd Build
@@ -70,7 +58,10 @@ jobs:
         new_plugin_ver=$tag-API$plugin_api
         mkdir plugins
         cp -v $build_dir/*.dll plugins
+        mkdir shared
+        cp -r libs/windows/bin/* shared
         zipfile=${package}_${new_plugin_ver}.zip
         powershell Compress-Archive -Path "plugins" -DestinationPath ${zipfile}
+        powershell Compress-Archive -U -Path "shared" -DestinationPath ${zipfile}
         curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/NWBFormat-plugin/windows/$zipfile"
       shell: bash

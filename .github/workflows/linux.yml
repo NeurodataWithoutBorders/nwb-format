@@ -29,12 +29,6 @@ jobs:
         git clone https://github.com/open-ephys/plugin-GUI.git --branch main --single-branch --depth 1
         sudo ./plugin-GUI/Resources/Scripts/install_linux_dependencies.sh
         cd plugin-GUI/Build && cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ..
-        cd ../..
-        mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysHDF5Lib.git --branch main
-        cd OpenEphysHDF5Lib/Build
-        cmake -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release ..
-        make install
     - name: build
       run: |
         cd Build
@@ -54,6 +48,8 @@ jobs:
         new_plugin_ver=$tag-API$plugin_api
         mkdir plugins 
         cp -r $build_dir/*.so plugins
+        mkdir shared
+        cp -r libs/linux/bin/* shared
         zipfile=${package}_${new_plugin_ver}.zip
-        zip -r -X $zipfile plugins
+        zip -r -X $zipfile plugins shared
         curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/NWBFormat-plugin/linux/$zipfile"

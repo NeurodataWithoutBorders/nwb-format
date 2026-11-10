@@ -81,7 +81,7 @@ or with [NWB GUIDE](https://nwb-guide.readthedocs.io).
 
 First, follow the instructions on [this page](https://open-ephys.github.io/gui-docs/Developer-Guide/Compiling-the-GUI.html) to build the Open Ephys GUI.
 
-This plugin depends on the [OpenEphysHDF5Lib](https://github.com/open-ephys-plugins/OpenEphysHDF5Lib) common library. Make sure you build and install that first before you proceed with building NWBFormat plugin. The plugin requires a GUI with plugin API version 10 (GUI v1.x).
+The plugin requires a GUI with plugin API version 10 (GUI v1.x). It no longer depends on the [OpenEphysHDF5Lib](https://github.com/open-ephys-plugins/OpenEphysHDF5Lib) common library: the HDF5 libraries (1.14.3) are included in `libs/`, and building the `install` target also installs their runtime libraries into the GUI's `shared` directory (`shared-api10` on macOS).
 
 [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) is included as a git submodule in `Source/aqnwb` and is compiled together with the plugin, so no separate installation of AqNWB is needed. Clone this repository with its submodules into a directory at the same level as the `plugin-GUI`:
 

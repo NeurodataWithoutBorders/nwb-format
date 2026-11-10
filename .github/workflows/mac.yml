@@ -27,16 +27,6 @@ jobs:
         cd ../..
         git clone https://github.com/open-ephys/plugin-GUI.git --branch main --single-branch --depth 1
         cd plugin-GUI/Build && cmake -G "Xcode" ..
-        cd ../..
-        mkdir OEPlugins && cd OEPlugins
-        git clone https://github.com/open-ephys-plugins/OpenEphysHDF5Lib.git --branch main
-        cd OpenEphysHDF5Lib/Build
-        cmake -G "Xcode" ..
-        xcodebuild -configuration Release
-        mkdir -p ../../../plugin-GUI/installed_libs/Release/lib/x64
-        mkdir -p ../../../plugin-GUI/installed_libs/include
-        cp Release/libOpenEphysHDF5.dylib ../../../plugin-GUI/installed_libs/Release/lib/x64
-        cp ../Source/HDF5FileFormat.h ../../../plugin-GUI/installed_libs/include
     - name: build
       run: |
         cd Build
@@ -65,6 +55,9 @@ jobs:
         mkdir plugins 
         cp -r $build_dir/*.bundle plugins
 
+        mkdir shared
+        cp -r libs/macos/bin/* shared
+
         # Turn our base64-encoded certificate back to a regular .p12 file
         echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
 
@@ -77,6 +70,9 @@ jobs:
         security import certificate.p12 -k build.keychain -P $MACOS_CERTIFICATE_PWD -T /usr/bin/codesign
         security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CI_KEYCHAIN_PWD build.keychain
         /usr/bin/codesign --force -s "$MACOS_CERTIFICATE_NAME" -v plugins/nwb-format.bundle --deep --strict --timestamp --options=runtime
+        for lib in shared/*.dylib; do
+          /usr/bin/codesign --force -s "$MACOS_CERTIFICATE_NAME" -v "$lib" --strict --timestamp --options=runtime
+        done
 
         /usr/bin/codesign -dv --verbose=4 plugins/nwb-format.bundle
 
@@ -110,5 +106,7 @@ jobs:
         spctl -vvv --assess --type exec plugins/nwb-format.bundle
 
         zipfile=${package}_${new_plugin_ver}.zip
-        /usr/bin/ditto -c -k --sequesterRsrc --keepParent plugins $zipfile
+        mkdir temp_dir
+        cp -R plugins shared temp_dir
+        /usr/bin/ditto -c -k --sequesterRsrc temp_dir $zipfile
         curl -H "X-JFrog-Art-Api:$ARTIFACTORY_ACCESS_TOKEN" -T $zipfile "https://openephys.jfrog.io/artifactory/NWBFormat-plugin/mac/$zipfile"
