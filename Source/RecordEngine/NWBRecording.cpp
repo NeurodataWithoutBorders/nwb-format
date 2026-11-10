@@ -68,20 +68,33 @@ std::vector<std::string> toStrings (const var& value)
     return strings;
 }
 
-/** Read the metadata file from the recording directory or one of its two parent directories (e.g., the
-    folder selected in the GUI). Uses the same structure as NeuroConv metadata ("NWBFile" and "Subject"). */
-SessionMetadata loadSessionMetadata (const File& recordingDirectory)
+/** Read the metadata file set in the NWB2 options (metadataFilePath, an absolute path) or, if none is set,
+    nwb_metadata.json from the recording directory or one of its two parent directories (e.g., the folder selected
+    in the GUI). Uses the same structure as NeuroConv metadata ("NWBFile" and "Subject"). */
+SessionMetadata loadSessionMetadata (const File& recordingDirectory, const String& metadataFilePath)
 {
     SessionMetadata metadata;
 
     File file;
-    File directory = recordingDirectory;
-    for (int level = 0; level < 3 && directory.isDirectory(); level++, directory = directory.getParentDirectory())
+    if (metadataFilePath.isNotEmpty())
     {
-        if (directory.getChildFile (metadataFileName).existsAsFile())
+        if (! File::isAbsolutePath (metadataFilePath) || ! File (metadataFilePath).existsAsFile())
         {
-            file = directory.getChildFile (metadataFileName);
-            break;
+            LOGE ("NWB2: The metadata file ", metadataFilePath, " set in the NWB2 options does not exist (an absolute path is required)");
+            return metadata;
+        }
+        file = File (metadataFilePath);
+    }
+    else
+    {
+        File directory = recordingDirectory;
+        for (int level = 0; level < 3 && directory.isDirectory(); level++, directory = directory.getParentDirectory())
+        {
+            if (directory.getChildFile (metadataFileName).existsAsFile())
+            {
+                file = directory.getChildFile (metadataFileName);
+                break;
+            }
         }
     }
     if (file == File())
@@ -185,6 +198,74 @@ SessionMetadata loadSessionMetadata (const File& recordingDirectory)
     return metadata;
 }
 
+/** Subject of the metadata, created if needed */
+AQNWB::NWB::Subject::SubjectSpec& subjectOf (SessionMetadata& metadata)
+{
+    if (! metadata.subject.has_value())
+        metadata.subject = AQNWB::NWB::Subject::SubjectSpec();
+    return *metadata.subject;
+}
+
+/** Session and subject metadata that can be set in the Record Node's NWB2 options (record engine parameters, IDs
+    1..n; ID 0 is the identifier). Non-empty values override the values in the metadata file. */
+struct MetadataParameter
+{
+    int id;
+    const char* name;
+    void (*apply) (SessionMetadata& metadata, const std::string& value);
+};
+
+const MetadataParameter metadataParameters[] = {
+    { 1, "Session description", [] (SessionMetadata& m, const std::string& v)
+      { m.sessionDescription = v; } },
+    { 2, "Experimenter(s) (separated by ;)", [] (SessionMetadata& m, const std::string& v)
+      {
+          std::vector<std::string> names;
+          for (const auto& name : StringArray::fromTokens (String (v), ";", ""))
+              if (name.trim().isNotEmpty())
+                  names.push_back (name.trim().toStdString());
+          m.general.experimenter = names;
+      } },
+    { 3, "Institution", [] (SessionMetadata& m, const std::string& v)
+      { m.general.institution = v; } },
+    { 4, "Lab", [] (SessionMetadata& m, const std::string& v)
+      { m.general.lab = v; } },
+    { 5, "Subject ID", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).subjectId = v; } },
+    { 6, "Subject species", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).species = v; } },
+    { 7, "Subject sex (M, F, U or O)", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).sex = v; } },
+    { 8, "Subject age (e.g. P90D)", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).age = v; } },
+    { 9, "Subject date of birth (ISO 8601)", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).dateOfBirth = v; } },
+    { 10, "Subject genotype", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).genotype = v; } },
+    { 11, "Subject strain", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).strain = v; } },
+    { 12, "Subject weight (e.g. 0.02 kg)", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).weight = v; } },
+    { 13, "Subject description", [] (SessionMetadata& m, const std::string& v)
+      { subjectOf (m).description = v; } },
+};
+
+/** NWB2 option with the path of the metadata file; if empty, nwb_metadata.json is searched next to the recording */
+const int metadataFileParameterId = 14;
+
+/** Warn if the subject metadata that DANDI requires is missing */
+void warnIfSubjectIncomplete (const SessionMetadata& metadata)
+{
+    const auto& subject = metadata.subject;
+    const auto isSet = [] (const std::optional<std::string>& value)
+    { return value.has_value() && ! value->empty(); };
+    if (subject.has_value() && isSet (subject->subjectId) && isSet (subject->species) && isSet (subject->sex)
+        && (isSet (subject->age) || isSet (subject->dateOfBirth)))
+        return;
+    LOGC ("NWB2: The subject metadata is incomplete (DANDI requires the subject ID, species, sex, and age or date of "
+          "birth). Set it in the NWB2 options of the Record Node or in a metadata file (see the plugin's README).");
+}
+
 /** Name of the ElectricalSeries / ElectrodeGroup for the stream of a continuous channel */
 std::string getStreamName (const ContinuousChannel* channel)
 {
@@ -251,6 +332,9 @@ RecordEngineManager* NWBRecordEngine::getEngineManager()
     EngineParameter* param;
     param = new EngineParameter (EngineParameter::STR, 0, "Identifier Text", String());
     man->addParameter (param);
+    for (const auto& metadataParameter : metadataParameters)
+        man->addParameter (new EngineParameter (EngineParameter::STR, metadataParameter.id, metadataParameter.name, String()));
+    man->addParameter (new EngineParameter (EngineParameter::STR, metadataFileParameterId, "Metadata file (JSON)", String()));
     return man;
 }
 
@@ -343,7 +427,21 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
 
     String identifier = identifierText.isNotEmpty() ? identifierText : String (AQNWB::generateUuid());
     std::string dataCollection = "Open Ephys GUI Version " + CoreServices::getGUIVersion().toStdString();
-    SessionMetadata metadata = loadSessionMetadata (rootFolder);
+    SessionMetadata metadata = loadSessionMetadata (rootFolder, metadataParameterValues[metadataFileParameterId].trim());
+    for (const auto& metadataParameter : metadataParameters)
+    {
+        const auto value = metadataParameterValues.find (metadataParameter.id);
+        if (value != metadataParameterValues.end() && value->second.trim().isNotEmpty())
+            metadataParameter.apply (metadata, value->second.trim().toStdString());
+    }
+    // AqNWB doesn't write a date of birth without time and time zone, and only reports this on stderr
+    if (metadata.subject.has_value() && metadata.subject->dateOfBirth.has_value()
+        && ! AQNWB::isISO8601Date (*metadata.subject->dateOfBirth))
+    {
+        LOGE ("NWB2: The subject's date of birth ", *metadata.subject->dateOfBirth, " is not written: it must be an ISO 8601 date and time with time zone, e.g. 2026-01-15T00:00:00Z");
+        metadata.subject->dateOfBirth.reset();
+    }
+    warnIfSubjectIncomplete (metadata);
     metadata.general.wasGeneratedBy = std::vector<std::pair<std::string, std::string>> {
         { "Open Ephys GUI", CoreServices::getGUIVersion().toStdString() },
         { "Open Ephys NWB Format plugin", pluginVersion }
@@ -1026,6 +1124,8 @@ void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
 void NWBRecordEngine::setParameter (EngineParameter& parameter)
 {
     strParameter (0, identifierText);
+    if (parameter.type == EngineParameter::STR && parameter.id > 0)
+        metadataParameterValues[parameter.id] = parameter.strParam.value;
 }
 
 void NWBRecordEngine::createRecordingArrays()
