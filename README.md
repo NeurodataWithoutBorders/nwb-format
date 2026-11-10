@@ -38,7 +38,7 @@ The `NWB File` file source (File Reader) can play back NWB files written by this
 
 ### Session and subject metadata
 
-NWB files should describe the session and the subject (DANDI requires a subject with `subject_id`, `species`, `sex` and `age` or `date_of_birth`). There are two ways to add this metadata:
+NWB files should describe the session and the subject (DANDI requires a subject with `subject_id`, `species`, `sex` and `age` or `date_of_birth`). There are three ways to add this metadata:
 
 **1. A metadata file (before recording).** If a file named `nwb_metadata.json` exists in the Record Node directory, the recording directory, or the directory selected for recordings in the GUI (searched in this order), the plugin writes its contents to each new NWB file. The file uses the same structure as [NeuroConv](https://neuroconv.readthedocs.io) metadata:
 
@@ -63,7 +63,15 @@ NWB files should describe the session and the subject (DANDI requires a subject 
 
 Supported `NWBFile` fields: `session_description`, `experiment_description`, `institution`, `lab`, `protocol`, `notes`, `session_id`, `stimulus_notes`, `surgery`, `virus`, `pharmacology`, `slices`, `source_script` with `source_script_file_name` (both are required), `experimenter`, `keywords` and `related_publications` (the last three are lists of strings). Supported `Subject` fields: `subject_id`, `species`, `sex`, `age` (ISO 8601 duration, e.g. `P90D`), `age__reference`, `date_of_birth` (ISO 8601), `description`, `genotype`, `strain` and `weight`. The GUI log reports which metadata file was used, and any unsupported fields. The plugin also writes `was_generated_by` (the versions of the GUI and of this plugin) and `data_collection` (the GUI version). The file is read when an NWB file is created (at the first recording of each experiment), so changes apply to the next experiment.
 
-**2. After recording.** NWB files can be edited once they are closed (when the next experiment starts or the GUI quits), e.g. with [PyNWB](https://pynwb.readthedocs.io):
+**2. The Record Node's NWB2 options (before recording, GUI versions after 1.1.0).** With NWB2 selected as the recording format, the gear button next to the format selector of the Record Node opens the format's options: Identifier Text, Session description, Experimenter(s) (separated by `;`), Institution, Lab, and the subject's ID, species, sex, age, date of birth, genotype, strain, weight and description. The options are saved with the signal chain and can be set with the [HTTP API](https://open-ephys.github.io/gui-docs/User-Manual/Remote-control.html) while acquisition is stopped, e.g. for Record Node 101:
+
+```bash
+curl -X PUT http://localhost:37497/api/processors/101/parameters/engine_NWB2_5 -d '{"value": "mouse01"}'
+```
+
+The parameter names are `engine_NWB2_<id>` with the IDs 0 (Identifier Text), 1 (Session description), 2 (Experimenter(s)), 3 (Institution), 4 (Lab), 5 (Subject ID), 6 (species), 7 (sex), 8 (age), 9 (date of birth), 10 (genotype), 11 (strain), 12 (weight) and 13 (subject description). Options that are set override the corresponding values in `nwb_metadata.json`; empty options don't. If the subject fields that DANDI requires are missing when an NWB file is created, the plugin logs a warning.
+
+**3. After recording.** NWB files can be edited once they are closed (when the next experiment starts or the GUI quits), e.g. with [PyNWB](https://pynwb.readthedocs.io):
 
 ```python
 from pynwb import NWBHDF5IO
