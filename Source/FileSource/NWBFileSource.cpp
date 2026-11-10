@@ -669,7 +669,11 @@ int NWBFileSource::readData (float* buffer, int nSamples)
 
 void NWBFileSource::processEventData (EventInfo& eventInfo, int64 start, int64 stop)
 {
-    // The File Reader loops over the data; events are reported for all loops overlapping [start, stop)
+    /* [start, stop) is a range of sample positions in the file. With GUI v1.1.0, stop can be larger than the number
+       of samples when the File Reader wraps around to the start of the file, so the events are checked once for each
+       pass through the file that overlaps the range, with their sample numbers offset by that pass. Since
+       open-ephys/plugin-GUI#712, the File Reader splits the range at the end of the file (stop <= number of samples),
+       and the loop over passes runs once. */
     const int64 numSamples = getActiveNumSamples();
     if (numSamples <= 0 || stop <= start)
         return;
