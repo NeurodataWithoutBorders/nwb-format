@@ -90,7 +90,7 @@ public:
     /** Write the timestamp sync text messages to disk*/
     void writeTimestampSyncText (uint64 streamId, int64 timestamp, float sourceSampleRate, String text) override;
 
-    /** Allows the file identifier to be set externally*/
+    /** Applies the engine parameters: the file identifier (ID 0) and the session and subject metadata (IDs 1..n) */
     void setParameter (EngineParameter& parameter) override;
 
 private:
@@ -267,6 +267,9 @@ private:
 
     /** The identifier for the current file (can be set externally) */
     String identifierText;
+
+    /** Session and subject metadata and the metadata file set in the Record Node's NWB2 options, by engine parameter ID */
+    std::map<int, String> metadataParameterValues;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NWBRecordEngine);
 };
