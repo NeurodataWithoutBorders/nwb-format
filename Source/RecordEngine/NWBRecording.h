@@ -248,7 +248,6 @@ private:
     bool referenceTimeSet = false;
 
     /** Reusable buffers for converting float samples to int16 and for sample numbers */
-    std::vector<float> scaledBuffer;
     std::vector<int16_t> intBuffer;
     std::vector<int64> sampleNumberBuffer;
 

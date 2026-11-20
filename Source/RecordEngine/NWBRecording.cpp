@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <optional>
 #include <set>
 #include <string>
@@ -274,22 +275,30 @@ std::string getStreamName (const ContinuousChannel* channel)
            + "." + channel->getStreamName().toStdString();
 }
 
-/** Scale float samples (in units of bitVolts) and convert them to int16 (out must hold numSamples values) */
-void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vector<float>& scaled, int16_t* out)
+/** Scale float samples (in units of bitVolts) and convert them to int16 (out must hold numSamples values). Gives the
+    same results as JUCE's FloatVectorOperations::copyWithMultiply and AudioDataConverters::convertFloatToInt16LE
+    (scale in float, multiply by 0x7fff and clip in double, round to nearest with ties to even by adding the same
+    constant as juce::roundToInt), but in one loop that the compiler can vectorize instead of JUCE's scalar loop. */
+void convertToInt16 (const float* data, int numSamples, float bitVolts, int16_t* out)
 {
-    if (scaled.size() < (size_t) numSamples)
-        scaled.resize (numSamples);
-
-    FloatVectorOperations::copyWithMultiply (scaled.data(), data, 1.0f / (float (0x7fff) * bitVolts), numSamples);
-    AudioDataConverters::convertFloatToInt16LE (scaled.data(), out, numSamples);
+    const float scale = 1.0f / (float (0x7fff) * bitVolts);
+    const double maxValue = (double) 0x7fff;
+    for (int i = 0; i < numSamples; i++)
+    {
+        // Adding 1.5 * 2^52 rounds the clipped value to an integer in the low bits of the double
+        const double value = std::clamp (maxValue * (double) (data[i] * scale), -maxValue, maxValue) + 6755399441055744.0;
+        int64_t bits;
+        std::memcpy (&bits, &value, sizeof (bits));
+        out[i] = (int16_t) bits;
+    }
 }
 
 /** Scale float samples (in units of bitVolts) and convert them to int16 */
-void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vector<float>& scaled, std::vector<int16_t>& out)
+void convertToInt16 (const float* data, int numSamples, float bitVolts, std::vector<int16_t>& out)
 {
     if (out.size() < (size_t) numSamples)
         out.resize (numSamples);
-    convertToInt16 (data, numSamples, bitVolts, scaled, out.data());
+    convertToInt16 (data, numSamples, bitVolts, out.data());
 }
 
 /** Interleave a block stored channel by channel (src[channel * numSamples + sample]) into the [sample][channel]
@@ -903,7 +912,7 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
     const size_t seriesIndex = writeChannelSeriesIndexes[writeChannel];
     const AQNWB::Channel& channel = recordingArrays[seriesIndex][writeChannelLocalIndexes[writeChannel]];
 
-    convertToInt16 (dataBuffer, size, channel.getBitVolts(), scaledBuffer, intBuffer);
+    convertToInt16 (dataBuffer, size, channel.getBitVolts(), intBuffer);
 
     // Timestamps are only written together with the first channel of each ElectricalSeries
     Status status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
@@ -961,7 +970,7 @@ void NWBRecordEngine::writeContinuousDataBatch (const int* writeChannels,
     }
     const auto& channels = recordingArrays[seriesIndex];
     for (int i = 0; i < numChannels; i++)
-        convertToInt16 (dataBuffers[i], numSamples, channels[i].getBitVolts(), scaledBuffer, channelBlockBuffer.data() + (size_t) i * numSamples);
+        convertToInt16 (dataBuffers[i], numSamples, channels[i].getBitVolts(), channelBlockBuffer.data() + (size_t) i * numSamples);
     interleaveInt16 (channelBlockBuffer.data(), interleavedBlockBuffer.data(), (size_t) numChannels, (size_t) numSamples);
 
     // Write the data and timestamps of all channels with one HDF5 write
@@ -1095,7 +1104,7 @@ void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
     const SizeType numSamplesPerChannel = static_cast<SizeType> (spikeChannel->getTotalSamples());
     const SizeType numChannels = static_cast<SizeType> (spikeChannel->getNumChannels());
 
-    convertToInt16 (spike->getDataPointer(), static_cast<int> (numSamplesPerChannel * numChannels), spikeChannel->getChannelBitVolts (0), scaledBuffer, intBuffer);
+    convertToInt16 (spike->getDataPointer(), static_cast<int> (numSamplesPerChannel * numChannels), spikeChannel->getChannelBitVolts (0), intBuffer);
 
     double timestamp = spike->getTimestampInSeconds();
 
