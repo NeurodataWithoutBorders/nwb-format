@@ -34,6 +34,8 @@
 #include "nwb/epoch/TimeIntervals.hpp"
 #include "nwb/event/EventsTable.hpp"
 
+#include "PerfStudy.h"
+
 typedef Array<const ContinuousChannel*> ContinuousGroup;
 
 namespace NWBRecording
@@ -258,8 +260,16 @@ private:
     /** Set after the first failed data write so that errors are only logged once per file */
     bool writeErrorLogged = false;
 
-    /** Interval for flushing the file during a recording, so that data is not lost if the GUI crashes */
-    static constexpr uint32 flushIntervalMs = 10000;
+    /** Interval for flushing the file during a recording, so that data is not lost if the GUI crashes
+        (0: only when a recording stops; set with NWB2_PERF_FLUSH_MS on the perf-study branch) */
+    uint32 flushIntervalMs = 10000;
+
+    /** Performance study: variant of the engine (environment variables) and timers of the write path */
+    PerfStudy::Options perfOptions;
+    PerfStudy::Timers perfTimers;
+
+    /** True while writeContinuousDataBatch writes channel by channel (its own timer covers the whole block) */
+    bool timingBatch = false;
 
     /** Time of the last flush (Time::getMillisecondCounter()) */
     uint32 lastFlushTime = 0;

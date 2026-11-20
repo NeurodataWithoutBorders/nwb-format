@@ -275,12 +275,28 @@ std::string getStreamName (const ContinuousChannel* channel)
            + "." + channel->getStreamName().toStdString();
 }
 
+/** Performance study: convert with JUCE, as before NeurodataWithoutBorders/nwb-format#3 (NWB2_PERF_CONVERSION=juce) */
+bool useJuceConversion = false;
+
+/** The conversion of JUCE: scale with copyWithMultiply, then the scalar convertFloatToInt16LE */
+void convertToInt16Juce (const float* data, int numSamples, float bitVolts, int16_t* out)
+{
+    thread_local std::vector<float> scaled;
+    if (scaled.size() < (size_t) numSamples)
+        scaled.resize (numSamples);
+    FloatVectorOperations::copyWithMultiply (scaled.data(), data, 1.0f / (float (0x7fff) * bitVolts), numSamples);
+    AudioDataConverters::convertFloatToInt16LE (scaled.data(), out, numSamples);
+}
+
 /** Scale float samples (in units of bitVolts) and convert them to int16 (out must hold numSamples values). Gives the
     same results as JUCE's FloatVectorOperations::copyWithMultiply and AudioDataConverters::convertFloatToInt16LE
     (scale in float, multiply by 0x7fff and clip in double, round to nearest with ties to even by adding the same
     constant as juce::roundToInt), but in one loop that the compiler can vectorize instead of JUCE's scalar loop. */
 void convertToInt16 (const float* data, int numSamples, float bitVolts, int16_t* out)
 {
+    if (useJuceConversion)
+        return convertToInt16Juce (data, numSamples, bitVolts, out);
+
     const float scale = 1.0f / (float (0x7fff) * bitVolts);
     const double maxValue = (double) 0x7fff;
     for (int i = 0; i < numSamples; i++)
@@ -359,6 +375,12 @@ bool NWBRecordEngine::checkStatus (Status status, const String& operation)
 
 void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int recordingNumber)
 {
+    perfOptions = PerfStudy::Options::fromEnvironment();
+    useJuceConversion = perfOptions.juceConversion;
+    flushIntervalMs = perfOptions.flushIntervalMs;
+    perfTimers.enabled = ! perfOptions.timersPath.empty();
+    perfTimers.reset();
+
     // Recordings within the same experiment are appended to the datasets of the open file. If the data
     // directory was changed between recordings (which doesn't reset the recording number), start a new
     // file in the new directory instead.
@@ -406,7 +428,7 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
     Status openStatus = Status::Failure;
     try
     {
-        openStatus = hdf5io != nullptr
+        openStatus = hdf5io != nullptr && ! perfOptions.defaultChunkCache
                          ? hdf5io->open (AQNWB::IO::FileMode::Overwrite, AQNWB::IO::HDF5::ChunkCacheConfig { cacheBytes })
                          : io->open (AQNWB::IO::FileMode::Overwrite);
     }
@@ -529,7 +551,8 @@ void NWBRecordEngine::openFiles (File rootFolder, int experimentNumber, int reco
     success = success && createEventsTables();
 
     // Start the recording in the NWB file
-    success = success && checkStatus (io->startRecording(), "Start recording");
+    auto recordingIO = std::dynamic_pointer_cast<AQNWB::IO::HDF5::HDF5IO> (io);
+    success = success && checkStatus (recordingIO != nullptr ? recordingIO->startRecording (! perfOptions.swmr) : io->startRecording(), "Start recording");
     lastFlushTime = Time::getMillisecondCounter();
 
     if (success)
@@ -865,9 +888,15 @@ void NWBRecordEngine::closeFiles()
     }
 
     writeSyncMessages (true);
-    recordingHasData = false;
 
     checkStatus (io->flush(), "Flushing the NWB file");
+
+    size_t numChannels = 0;
+    for (const auto& series : recordingArrays)
+        numChannels += series.size();
+    perfTimers.write (perfOptions.timersPath, perfOptions, (int) numChannels, recordingHasData ? recordingStopTime - recordingStartTime : 0.0);
+    perfTimers.reset();
+    recordingHasData = false;
 }
 
 void NWBRecordEngine::closeFile()
@@ -909,18 +938,29 @@ void NWBRecordEngine::writeContinuousData (int writeChannel,
     if (io == nullptr || writeChannel < 0 || (size_t) writeChannel >= writeChannelSeriesIndexes.size())
         return;
 
+    std::optional<PerfStudy::ScopedTimer> callTimer;
+    if (! timingBatch)
+        callTimer.emplace (perfTimers, PerfStudy::Section::Continuous);
+
     const size_t seriesIndex = writeChannelSeriesIndexes[writeChannel];
     const AQNWB::Channel& channel = recordingArrays[seriesIndex][writeChannelLocalIndexes[writeChannel]];
 
-    convertToInt16 (dataBuffer, size, channel.getBitVolts(), intBuffer);
+    {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::Convert);
+        convertToInt16 (dataBuffer, size, channel.getBitVolts(), intBuffer);
+    }
 
     // Timestamps are only written together with the first channel of each ElectricalSeries
-    Status status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
-                                                          esContainerIndexes[seriesIndex],
-                                                          channel,
-                                                          static_cast<SizeType> (size),
-                                                          intBuffer.data(),
-                                                          timestampBuffer);
+    Status status = Status::Success;
+    {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::DataWrite);
+        status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
+                                                       esContainerIndexes[seriesIndex],
+                                                       channel,
+                                                       static_cast<SizeType> (size),
+                                                       intBuffer.data(),
+                                                       timestampBuffer);
+    }
 
     /* All channels of a stream share the timestamps and sample numbers, so these are written
        together with the first channel of each ElectricalSeries */
@@ -941,6 +981,8 @@ void NWBRecordEngine::writeContinuousDataBatch (const int* writeChannels,
     if (io == nullptr || numChannels <= 0 || numSamples <= 0)
         return;
 
+    PerfStudy::ScopedTimer callTimer (perfTimers, PerfStudy::Section::Continuous);
+
     // The GUI passes all recorded channels of a data stream, i.e., all channels of one ElectricalSeries in
     // channel order. Write any other combination of channels one channel at a time.
     const auto isValidWriteChannel = [this] (int writeChannel)
@@ -954,10 +996,13 @@ void NWBRecordEngine::writeContinuousDataBatch (const int* writeChannels,
                       && writeChannelLocalIndexes[writeChannels[i]] == (size_t) i;
     }
 
-    if (! wholeSeries)
+    // Performance study: write channel by channel, as the GUI does without batch writes (NWB2_PERF_WRITE=channel)
+    if (! wholeSeries || perfOptions.perChannelWrites)
     {
+        timingBatch = true;
         for (int i = 0; i < numChannels; i++)
             writeContinuousData (writeChannels[i], realChannels[i], dataBuffers[i], timestampBuffer, numSamples);
+        timingBatch = false;
         return;
     }
 
@@ -969,16 +1014,34 @@ void NWBRecordEngine::writeContinuousDataBatch (const int* writeChannels,
         interleavedBlockBuffer.resize (blockSize);
     }
     const auto& channels = recordingArrays[seriesIndex];
-    for (int i = 0; i < numChannels; i++)
-        convertToInt16 (dataBuffers[i], numSamples, channels[i].getBitVolts(), channelBlockBuffer.data() + (size_t) i * numSamples);
-    interleaveInt16 (channelBlockBuffer.data(), interleavedBlockBuffer.data(), (size_t) numChannels, (size_t) numSamples);
+    {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::Convert);
+        for (int i = 0; i < numChannels; i++)
+            convertToInt16 (dataBuffers[i], numSamples, channels[i].getBitVolts(), channelBlockBuffer.data() + (size_t) i * numSamples);
+    }
+    {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::Interleave);
+        if (perfOptions.stridedInterleave)
+        {
+            // Performance study: channel by channel, i.e. with a stride of numChannels (NWB2_PERF_INTERLEAVE=strided)
+            for (int i = 0; i < numChannels; i++)
+                for (int s = 0; s < numSamples; s++)
+                    interleavedBlockBuffer[(size_t) s * numChannels + i] = channelBlockBuffer[(size_t) i * numSamples + s];
+        }
+        else
+            interleaveInt16 (channelBlockBuffer.data(), interleavedBlockBuffer.data(), (size_t) numChannels, (size_t) numSamples);
+    }
 
     // Write the data and timestamps of all channels with one HDF5 write
-    Status status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
-                                                          esContainerIndexes[seriesIndex],
-                                                          static_cast<SizeType> (numSamples),
-                                                          interleavedBlockBuffer.data(),
-                                                          timestampBuffer);
+    Status status = Status::Success;
+    {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::DataWrite);
+        status = AQNWB::IO::writeElectricalSeriesData (io->getRecordingObjects(),
+                                                       esContainerIndexes[seriesIndex],
+                                                       static_cast<SizeType> (numSamples),
+                                                       interleavedBlockBuffer.data(),
+                                                       timestampBuffer);
+    }
     status = status && writeBlockSampleNumbers (seriesIndex, getLatestSampleNumber (writeChannels[0]), timestampBuffer, numSamples);
 
     finishContinuousWrite (status, seriesIndex);
@@ -993,7 +1056,11 @@ Status NWBRecordEngine::writeBlockSampleNumbers (size_t seriesIndex, int64 first
         sampleNumberBuffer[i] = firstSampleNumber + i;
 
     auto& written = esSampleNumbersWritten[seriesIndex];
-    const Status status = esSampleNumbers[seriesIndex]->writeDataBlock ({ static_cast<SizeType> (size) }, { written }, AQNWB::IO::BaseDataType::I64, sampleNumberBuffer.data());
+    Status status = Status::Success;
+    {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::SampleNumbers);
+        status = esSampleNumbers[seriesIndex]->writeDataBlock ({ static_cast<SizeType> (size) }, { written }, AQNWB::IO::BaseDataType::I64, sampleNumberBuffer.data());
+    }
     written += static_cast<SizeType> (size);
 
     dataWritten (timestampBuffer[0], timestampBuffer[size - 1]);
@@ -1034,8 +1101,9 @@ void NWBRecordEngine::dataWritten (double firstTimestamp, double lastTimestamp)
 
     // Flush periodically so that the data written so far is not lost if the GUI crashes
     const uint32 now = Time::getMillisecondCounter();
-    if (now - lastFlushTime >= flushIntervalMs)
+    if (flushIntervalMs > 0 && now - lastFlushTime >= flushIntervalMs)
     {
+        PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::Flush);
         checkStatus (io->flush(), "Flushing the NWB file");
         lastFlushTime = now;
     }
@@ -1043,6 +1111,7 @@ void NWBRecordEngine::dataWritten (double firstTimestamp, double lastTimestamp)
 
 void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
 {
+    PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::Event);
     if (io == nullptr || eventIndex < 0 || (size_t) eventIndex >= eventTables.size())
         return;
 
@@ -1097,6 +1166,7 @@ void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 sampleNumbe
 
 void NWBRecordEngine::writeSpike (int electrodeIndex, const Spike* spike)
 {
+    PerfStudy::ScopedTimer timer (perfTimers, PerfStudy::Section::Spike);
     if (io == nullptr || electrodeIndex < 0 || (size_t) electrodeIndex >= spikeContainerIndexes.size())
         return;
 
