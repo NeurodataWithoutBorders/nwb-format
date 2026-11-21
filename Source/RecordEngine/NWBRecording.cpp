@@ -865,6 +865,7 @@ void NWBRecordEngine::closeFiles()
     }
 
     writeSyncMessages (true);
+    writePendingEvents();
     recordingHasData = false;
 
     checkStatus (io->flush(), "Flushing the NWB file");
@@ -878,6 +879,8 @@ void NWBRecordEngine::closeFile()
     esSampleNumbersWritten.clear();
     spikeSampleNumbersWritten.clear();
     epochs.reset();
+    if (io != nullptr && io->isOpen())
+        writePendingEvents();
     eventTables.clear();
     syncMessagesTable.reset();
     pendingSyncMessages.clear();
@@ -1036,6 +1039,7 @@ void NWBRecordEngine::dataWritten (double firstTimestamp, double lastTimestamp)
     const uint32 now = Time::getMillisecondCounter();
     if (now - lastFlushTime >= flushIntervalMs)
     {
+        writePendingEvents();
         checkStatus (io->flush(), "Flushing the NWB file");
         lastFlushTime = now;
     }
@@ -1046,7 +1050,7 @@ void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
     if (io == nullptr || eventIndex < 0 || (size_t) eventIndex >= eventTables.size())
         return;
 
-    const EventTable& eventTable = eventTables[eventIndex];
+    EventTable& eventTable = eventTables[eventIndex];
     if (eventTable.table == nullptr)
     {
         if (! eventErrorLogged)
@@ -1077,12 +1081,25 @@ void NWBRecordEngine::writeEvent (int eventIndex, const MidiMessage& event)
         row["annotation"] = static_cast<const TextEvent*> (eventStruct.get())->getText().toStdString();
     }
 
-    if (eventTable.table->addRow (row) != Status::Success && ! eventErrorLogged)
-    {
-        LOGE ("NWB2: Writing event to ", eventTable.name, " failed");
-        eventErrorLogged = true;
-    }
+    eventTable.pendingRows.push_back (std::move (row));
+    if (eventTable.pendingRows.size() >= eventBatchRows)
+        writePendingEvents();
     dataWritten (eventStruct->getTimestampInSeconds(), eventStruct->getTimestampInSeconds());
+}
+
+void NWBRecordEngine::writePendingEvents()
+{
+    for (auto& eventTable : eventTables)
+    {
+        if (eventTable.pendingRows.empty())
+            continue;
+        if (eventTable.table->addRows (eventTable.pendingRows) != Status::Success && ! eventErrorLogged)
+        {
+            LOGE ("NWB2: Writing events to ", eventTable.name, " failed");
+            eventErrorLogged = true;
+        }
+        eventTable.pendingRows.clear();
+    }
 }
 
 void NWBRecordEngine::writeTimestampSyncText (uint64 streamId, int64 sampleNumber, float sourceSampleRate, String text)

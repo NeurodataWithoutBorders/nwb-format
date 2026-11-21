@@ -212,7 +212,17 @@ private:
         EventTableType type = EventTableType::Unsupported;
         std::string name;
         std::shared_ptr<AQNWB::NWB::EventsTable> table;
+        /** Events not written yet: written with one addRows call (see writePendingEvents) */
+        std::vector<AQNWB::Types::RowData> pendingRows;
     };
+
+    /** Number of pending events of a table at which they are written. Writing events in batches is much
+        faster than one addRow per event (~1-2 us instead of ~20 us per event). */
+    static constexpr size_t eventBatchRows = 256;
+
+    /** Write the pending events of all event tables. Called when a table has eventBatchRows pending events,
+        before each flush of the file and when recording stops, so the events are on disk as the continuous data. */
+    void writePendingEvents();
 
     /** One EventTable per recorded event channel (indexed by the event channel index) */
     std::vector<EventTable> eventTables;
