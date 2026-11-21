@@ -32,6 +32,7 @@
    NWB2_PERF_CACHE=default        use the HDF5 default chunk cache instead of one sized to the channel count
    NWB2_PERF_CONVERSION=juce      convert to int16 with JUCE (copyWithMultiply + convertFloatToInt16LE)
    NWB2_PERF_INTERLEAVE=strided   interleave a block channel by channel (strided writes) instead of in tiles
+   NWB2_PERF_EVENTS=row           write each event when it arrives (one row per call) instead of in batches
    NWB2_PERF_FLUSH_MS=<ms>        flush interval during a recording (default 10000; 0: only when recording stops)
    NWB2_PERF_SWMR=0               don't use HDF5 SWMR mode
    NWB2_PERF_TIMERS=<file>        append the timers of each recording to <file> (one JSON line per recording)
@@ -56,6 +57,7 @@ struct Options
     bool defaultChunkCache = false;
     bool juceConversion = false;
     bool stridedInterleave = false;
+    bool rowEvents = false;
     bool swmr = true;
     uint32_t flushIntervalMs = 10000;
     std::string timersPath;
@@ -72,6 +74,7 @@ struct Options
         options.defaultChunkCache = env ("NWB2_PERF_CACHE") == "default";
         options.juceConversion = env ("NWB2_PERF_CONVERSION") == "juce";
         options.stridedInterleave = env ("NWB2_PERF_INTERLEAVE") == "strided";
+        options.rowEvents = env ("NWB2_PERF_EVENTS") == "row";
         options.swmr = env ("NWB2_PERF_SWMR") != "0";
         if (! env ("NWB2_PERF_FLUSH_MS").empty())
             options.flushIntervalMs = static_cast<uint32_t> (std::stoul (env ("NWB2_PERF_FLUSH_MS")));
@@ -83,7 +86,8 @@ struct Options
     {
         return std::string ("\"write\": \"") + (perChannelWrites ? "channel" : "batch") + "\", \"cache\": \""
                + (defaultChunkCache ? "default" : "sized") + "\", \"conversion\": \"" + (juceConversion ? "juce" : "fast")
-               + "\", \"interleave\": \"" + (stridedInterleave ? "strided" : "tiled") + "\", \"swmr\": "
+               + "\", \"interleave\": \"" + (stridedInterleave ? "strided" : "tiled") + "\", \"events\": \""
+               + (rowEvents ? "row" : "batch") + "\", \"swmr\": "
                + (swmr ? "true" : "false") + ", \"flush_ms\": " + std::to_string (flushIntervalMs);
     }
 };
