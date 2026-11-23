@@ -30,7 +30,12 @@ Timestamps are the GUI's (synchronized) timestamps, as in the Binary format: sec
 
 The plugin uses [AqNWB](https://github.com/NeurodataWithoutBorders/aqnwb) to write NWB 2.11 files. Each experiment (start/stop of acquisition) is written to a separate file `experiment<N>.nwb`, while recordings within an experiment are appended to the same datasets. If the data directory is changed between recordings, the next recording starts a new file in the new directory. Existing files are never changed: if the directory already contains `experiment<N>.nwb` (e.g., after changing the directory and back), the new file is named after the experiment and its first recording, e.g. `experiment1_recording3.nwb`.
 
-To ensure resilience against data loss, e.g., in case of a GUI crash, the file is written in HDF5 SWMR (single-writer, multiple-reader) mode. Using SWMR mode ensures that HDF5 metadata remains consistent. In addition, the file is flushed when a recording stops and every 10 s during a recording, so that data is not lost if the GUI crashes.
+To protect the recording if the GUI crashes, the plugin uses two mechanisms:
+
+- **SWMR mode:** the file is written in HDF5 SWMR (single-writer, multiple-reader) mode, which keeps the file consistent at any time, so that a crash doesn't leave a damaged file. Other programs can also read the file during a recording by opening it as an SWMR reader (e.g., `h5py.File(path, "r", swmr=True)`).
+- **Flushing:** the file is flushed every 10 s during a recording and when a recording stops. Data reach the file when it is flushed, so a crash loses the data since the last flush (up to ~10 s); everything before is readable.
+
+After a crash, HDF5 still marks the file as open for writing, and opening it normally (e.g., with PyNWB) fails with "file is already open for write (may use <h5clear file> to clear file consistency flags)". Either open the file as an SWMR reader, or reset the flags once with `h5clear -s experiment1.nwb`, after which PyNWB and other tools can read the file. `h5clear` only resets these flags; it is part of the HDF5 command-line tools (e.g., `conda install -c conda-forge hdf5`), not of the h5py package.
 
 Using SWMR mode has the limitation that objects cannot be added to the file while a recording is ongoing. As such, all objects are created when the file is created. As a result, an event channel that never produces an event results in an empty `EventsTable`. Depending on your configuration, NWB Inspector may flag empty tables via the `check_empty_table` check. To avoid this, use `nwbinspector --ignore check_empty_table` to skip this check. 
 
